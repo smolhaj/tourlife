@@ -5,8 +5,9 @@
 // engine API and checks invariants after every season.
 
 import * as E from '../src/game/engine.js'
-import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS } from '../src/game/constants.js'
-import { overall, progressYear } from '../src/game/ratings.js'
+import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS, CIRCUITS, COURSE_TYPES, PAYOUT_PCT } from '../src/game/constants.js'
+import { overall, progressYear, emptyRatings } from '../src/game/ratings.js'
+import { simTournament, makeEntrant } from '../src/game/tournament.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney } from '../src/game/finance.js'
@@ -728,6 +729,51 @@ section('SCENARIO 15 — you never tee off on your own')
   check('gutting the senior roster still never leaves you alone', alone === 0,
     `${alone} events with a field of one after retiring ${retiredOff} seniors`)
   console.log(`   with ${retiredOff} seniors force-retired, thinnest field was ${thinnest === Infinity ? 'n/a' : thinnest}`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 16 — a tournament pays out its purse, no more and no less')
+{
+  // PAYOUT_PCT is one list of percentages, but cut sizes differ by circuit and
+  // ties at the cut push the paid field past its nominal size, so the places
+  // actually paid vary from event to event. Left unscaled this ran from 3.5%
+  // under the purse to 1.4% over — money quietly created or destroyed on every
+  // tournament in the world, for forty years.
+  let worst = { err: 0, where: '' }
+  const courses = Object.keys(COURSE_TYPES)
+  for (const [cid, circuit] of Object.entries(CIRCUITS)) {
+    for (let i = 0; i < 12; i++) {
+      const rng = new Rng(3000 + i)
+      const ev = {
+        id: 'x', name: 'X', courseType: courses[i % courses.length], difficulty: 1,
+        fieldSize: circuit.fieldSize, cutSize: circuit.cutSize, purse: 6_000_000,
+        circuit: cid, isMajor: cid === 'major',
+      }
+      const field = []
+      for (let j = 0; j < ev.fieldSize; j++) {
+        field.push(makeEntrant(
+          { pid: j, name: `P${j}`, playstyle: 'balanced', form: 0, fatigue: 20 },
+          emptyRatings(Math.round(rng.gaussClamped(64, 8))), ev,
+        ))
+      }
+      const res = simTournament(ev, field, new Rng(4000 + i))
+      const paid = res.results.reduce((a, r) => a + (r.money || 0), 0)
+      const err = Math.abs(paid - ev.purse) / ev.purse
+      if (err > worst.err) worst = { err, where: `${cid}: paid ${Math.round(paid).toLocaleString()} of ${ev.purse.toLocaleString()}` }
+      // Nobody who made the cut should be sent home with nothing.
+      const unpaid = res.results.filter((r) => r.madeCut && r.pos && !(r.money > 0)).length
+      check(`${cid}: everyone who made the cut is paid`, unpaid === 0, `${unpaid} finishers on zero`)
+    }
+  }
+  // Rounding to whole dollars across ~70 places is the only slack allowed.
+  check('every circuit pays out its purse exactly', worst.err < 0.0001, worst.where)
+  console.log(`   worst discrepancy across all circuits: ${(worst.err * 100).toFixed(4)}% (${worst.where})`)
+
+  const total = PAYOUT_PCT.reduce((a, b) => a + b, 0)
+  check('the payout table itself sums to 100%', Math.abs(total - 100) < 0.01, `sums to ${total.toFixed(3)}%`)
+  const maxCut = Math.max(...Object.values(CIRCUITS).map((c) => c.cutSize))
+  check('the payout table covers the largest cut', PAYOUT_PCT.length >= maxCut,
+    `${PAYOUT_PCT.length} places for a cut of ${maxCut}`)
 }
 
 // ---------------------------------------------------------------------------

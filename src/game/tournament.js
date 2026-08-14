@@ -133,6 +133,18 @@ export function simTournament(event, entrants, rng, opts = {}) {
   // Prize money: tied players split the sum of the places they occupy.
   const paysMoney = event.purse > 0
   if (paysMoney) {
+    // Scale the table to the places actually being paid, so the purse is
+    // distributed exactly. It cannot be baked into the table: cut sizes differ
+    // by circuit (60 here, 65 there, 78 and no cut on the senior tour) and ties
+    // at the cut line push the paid field past its nominal size, so any fixed
+    // list of percentages is wrong for most events. Left alone this paid out
+    // between 3.5% under and 1.4% over the purse depending on the circuit.
+    let paidPlaces = 0
+    for (const r of results) if (r.madeCut && r.pos) paidPlaces += 1
+    let pctTotal = 0
+    for (let place = 1; place <= paidPlaces; place++) pctTotal += PAYOUT_PCT[place - 1] || 0
+    const scale = pctTotal > 0 ? 100 / pctTotal : 0
+
     let idx = 0
     while (idx < results.length) {
       const r = results[idx]
@@ -146,7 +158,7 @@ export function simTournament(event, entrants, rng, opts = {}) {
       for (let place = r.pos; place <= r.pos + (end - idx); place++) {
         pctSum += PAYOUT_PCT[place - 1] || 0
       }
-      const share = (pctSum / 100) * event.purse / (end - idx + 1)
+      const share = (pctSum / 100) * scale * event.purse / (end - idx + 1)
       for (let k = idx; k <= end; k++) results[k].money = Math.round(share)
       idx = end + 1
     }

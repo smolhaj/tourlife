@@ -249,14 +249,29 @@ export const SENIOR_AGE = 50
 // ------------------------------------------------------------------- payouts
 
 /** Official-looking payout percentages for positions 1..70. */
+/**
+ * Share of the purse by finishing place, as a percentage.
+ *
+ * Two things this table has to get right, and used to get wrong. It must sum
+ * to exactly 100 — the old one summed to 101.397, so every tournament ever
+ * played quietly paid out 1.4% more than its purse, for the player and for
+ * every AI, compounding into career earnings for forty years. And it must be
+ * at least as long as the largest cut: the senior tour has no cut and 78
+ * places, so with 70 entries whoever finished 71st through 78th made the cut
+ * and was paid nothing.
+ *
+ * The winner's 18% is the recognisable figure and is kept exact; the rest is
+ * scaled to make up the remaining 82. Scenario 16 asserts both properties.
+ */
 export const PAYOUT_PCT = [
-  18.0, 10.9, 6.9, 4.9, 4.1, 3.625, 3.375, 3.125, 2.925, 2.725,
-  2.525, 2.325, 2.125, 1.925, 1.825, 1.725, 1.625, 1.525, 1.425, 1.325,
-  1.225, 1.125, 1.045, 0.965, 0.895, 0.825, 0.795, 0.765, 0.735, 0.705,
-  0.675, 0.645, 0.615, 0.585, 0.5625, 0.5375, 0.5125, 0.4875, 0.465, 0.445,
-  0.425, 0.405, 0.385, 0.365, 0.345, 0.325, 0.305, 0.285, 0.269, 0.259,
-  0.251, 0.245, 0.241, 0.237, 0.235, 0.233, 0.231, 0.229, 0.227, 0.225,
-  0.223, 0.221, 0.219, 0.217, 0.215, 0.213, 0.211, 0.209, 0.207, 0.205,
+  18, 10.5285, 6.6649, 4.733, 3.9603, 3.5015, 3.26, 3.0185, 2.8253, 2.6321,
+  2.439, 2.2458, 2.0526, 1.8594, 1.7628, 1.6662, 1.5696, 1.473, 1.3764, 1.2798,
+  1.1833, 1.0867, 1.0094, 0.9321, 0.8645, 0.7969, 0.7679, 0.7389, 0.71, 0.681,
+  0.652, 0.623, 0.594, 0.5651, 0.5433, 0.5192, 0.495, 0.4709, 0.4492, 0.4298,
+  0.4105, 0.3912, 0.3719, 0.3526, 0.3332, 0.3139, 0.2946, 0.2753, 0.2598, 0.2502,
+  0.2424, 0.2367, 0.2328, 0.2289, 0.227, 0.2251, 0.2231, 0.2212, 0.2193, 0.2173,
+  0.2154, 0.2135, 0.2115, 0.2096, 0.2077, 0.2057, 0.2038, 0.2019, 0.1999, 0.198,
+  0.1942, 0.1903, 0.1864, 0.1826, 0.1787, 0.1748, 0.171, 0.1671,
 ]
 
 /** Ranking-point multiplier by finishing position. */
