@@ -22,7 +22,12 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 20
+          cache: npm
       - run: npm ci
+      # Gate the live site on the same suite CI runs. Without this, a direct
+      # push to main — or a merge that lands before the PR checks finish —
+      # deploys straight to players regardless.
+      - run: npm test
       - run: npm run build
       - uses: actions/configure-pages@v5
         with:
