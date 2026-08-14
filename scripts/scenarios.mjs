@@ -677,6 +677,60 @@ section('SCENARIO 14 — the training choice is actually a choice')
 }
 
 // ---------------------------------------------------------------------------
+section('SCENARIO 15 — you never tee off on your own')
+{
+  // The senior roster is smaller than a senior field, so everyone played every
+  // week, everyone hit their starts budget in the same week, and every senior
+  // event after it had a field of one: the player, alone, collecting the
+  // winner's cheque and the ranking points. A third of one test career's
+  // senior events went that way. Measure the thinnest field on every circuit.
+  const worst = {}
+  for (let seed = 0; seed < 2; seed++) {
+    const s = E.newGame({ name: 'Field Audit', seed: 900 + seed * 311, talent: 0.55 + seed * 0.15, age: 21 })
+    while (!s.player.retired && s.player.age < 58) {
+      E.autoOffseason(s)
+      E.startSeason(s)
+      E.simToOffseason(s)
+      for (const r of Object.values(s.seasonResults)) {
+        // `top` holds 20 rows for the player's own events, so anything shorter
+        // means the field itself was short.
+        if (!r.top?.some((t) => t.isUser)) continue
+        const cur = worst[r.circuit]
+        if (!cur || r.top.length < cur.rows) worst[r.circuit] = { rows: r.top.length, where: `${s.year} ${r.name}` }
+      }
+    }
+  }
+  const seen = Object.keys(worst)
+  check('the audit saw every circuit', seen.length >= 5, `only saw ${seen.join(', ')}`)
+  for (const [circuit, w] of Object.entries(worst).sort()) {
+    check(`${circuit}: never a near-empty field`, w.rows >= 20, `thinnest was ${w.rows} rows — ${w.where}`)
+  }
+  console.log(`   thinnest field by circuit: ${Object.entries(worst).sort().map(([c, w]) => `${c} ${w.rows}`).join(', ')}`)
+
+  // And the same guarantee when the roster is gutted underneath you, which is
+  // the state the bug actually arose from.
+  const s = E.newGame({ name: 'Last Man', seed: 14, talent: 0.7, age: 21 })
+  while (!s.player.retired && s.player.age < 52) { E.autoOffseason(s); E.startSeason(s); E.simToOffseason(s) }
+  let retiredOff = 0
+  for (const p of s.world.players) {
+    if (!p.isUser && !p.retired && p.age >= SENIOR_AGE) { p.retired = true; retiredOff += 1 }
+  }
+  E.autoOffseason(s)
+  E.startSeason(s)
+  E.simToOffseason(s)
+  let alone = 0
+  let thinnest = Infinity
+  for (const r of Object.values(s.seasonResults)) {
+    if (!r.top?.some((t) => t.isUser)) continue
+    thinnest = Math.min(thinnest, r.top.length)
+    if (r.top.length <= 1) alone += 1
+  }
+  check('gutting the senior roster still never leaves you alone', alone === 0,
+    `${alone} events with a field of one after retiring ${retiredOff} seniors`)
+  console.log(`   with ${retiredOff} seniors force-retired, thinnest field was ${thinnest === Infinity ? 'n/a' : thinnest}`)
+}
+
+// ---------------------------------------------------------------------------
 console.log(`\n${'='.repeat(60)}`)
 console.log(`${pass} passed, ${fail} failed`)
 if (fail) {
