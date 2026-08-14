@@ -542,10 +542,12 @@ function recordUserResult(state, event, outcome, rng, byPid) {
   if (row.madeCut) {
     const delta = clamp((25 - row.pos) / 22, -0.7, 1.5)
     p.form = clamp(p.form + delta, -5.5, 5.5)
-    p.morale = clamp(p.morale + clamp((22 - row.pos) / 6, -3, 6), 0, 100)
+    // Neutral around a mid-pack finish. Anchoring this at a top-20 made every
+    // ordinary week a morale loss, which drained even good careers to zero.
+    p.morale = clamp(p.morale + clamp((30 - row.pos) / 9, -2.5, 5), 0, 100)
   } else {
     p.form = clamp(p.form - 0.55, -5.5, 5.5)
-    p.morale = clamp(p.morale - 3.5, 0, 100)
+    p.morale = clamp(p.morale - 2, 0, 100)
   }
 
   const won = row.madeCut && row.pos === 1
@@ -785,8 +787,11 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
   if (!playedThisWeek) {
     const recovery = 13 + physio * 9 + (state.training.choice === 'rest' ? 6 : 0)
     p.fatigue = clamp(p.fatigue - recovery, 0, 100)
-    p.morale = clamp(p.morale + 0.6, 0, 100)
+    p.morale = clamp(p.morale + 1.2, 0, 100)
   }
+  // Mood reverts toward the middle. Without this, one bad run defines the
+  // rest of a career.
+  p.morale = clamp(p.morale + (50 - p.morale) * 0.02, 0, 100)
 
   if (p.injury) {
     p.injury.weeksLeft -= 1
@@ -1124,12 +1129,15 @@ function prepareOffseason(state, isFirst, rng) {
       .slice(0, 6),
   }
 
-  // A life event, occasionally.
+  // A life event, occasionally. The pool can be empty for a very young
+  // player, and picking from an empty array crashes the offseason.
   if (!isFirst && rng.chance(0.22)) {
     const pool = LIFE_EVENTS.filter((e) => state.player.age >= e.minAge)
-    const ev = rng.pick(pool)
-    applyLifeEvent(state, ev)
-    state.offseason.lifeEvent = ev
+    if (pool.length) {
+      const ev = rng.pick(pool)
+      applyLifeEvent(state, ev)
+      state.offseason.lifeEvent = ev
+    }
   }
 
   refreshDerived(state)
@@ -1148,6 +1156,10 @@ function applyLifeEvent(state, ev) {
 
 /** Commit the offseason and tee up the new year. */
 export function startSeason(state) {
+  // A double-tap on the offseason button can fire this twice before React
+  // re-renders; without this guard the second call ages the player a year and
+  // skips the season they just started.
+  if (state.phase !== 'offseason') return state
   const rng = Rng.from(state.rngState)
   const p = state.player
   const wasFirst = state.offseason?.isFirst
@@ -1619,14 +1631,27 @@ export function autoFillSchedule(state, targetStarts) {
     usedWeeks.add(ev.week)
     count++
   }
-  for (const { ev } of ranked) {
+  // Never build a run of more than four weeks. Checking only backwards let
+  // the ranked (rather than chronological) fill order stitch together runs of
+  // nine, which is not a schedule anybody would choose.
+  const runLengthWith = (week) => {
+    let n = 1
+    for (let w = week - 1; usedWeeks.has(w); w--) n++
+    for (let w = week + 1; usedWeeks.has(w); w++) n++
+    return n
+  }
+  // Spread the load first, but if the player asked for a punishing schedule
+  // they get one — the fatigue is the point, not something to protect them from.
+  for (const maxRun of [3, 4, Infinity]) {
+    for (const { ev } of ranked) {
+      if (count >= desired) break
+      if (usedWeeks.has(ev.week)) continue
+      if (runLengthWith(ev.week) > maxRun) continue
+      target[ev.id] = true
+      usedWeeks.add(ev.week)
+      count++
+    }
     if (count >= desired) break
-    if (usedWeeks.has(ev.week)) continue
-    // Never play more than three weeks in a row.
-    if (usedWeeks.has(ev.week - 1) && usedWeeks.has(ev.week - 2) && usedWeeks.has(ev.week - 3)) continue
-    target[ev.id] = true
-    usedWeeks.add(ev.week)
-    count++
   }
 
   if (offseason) state.nextEntered = target
