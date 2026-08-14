@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
+import { clearSave } from './game/save.js'
 import './index.css'
 
 class ErrorBoundary extends React.Component {
@@ -36,11 +37,10 @@ class ErrorBoundary extends React.Component {
           <button
             className="btn danger"
             onClick={() => {
-              try {
-                localStorage.removeItem('tourlife.save.v1')
-              } catch {
-                /* ignore */
-              }
+              // Route this through the same helper the app uses rather than
+              // a hardcoded key: it also drops the tab-ownership record, and
+              // it cannot drift out of step with SAVE_KEY.
+              clearSave()
               window.location.reload()
             }}
           >
