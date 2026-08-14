@@ -148,16 +148,31 @@ scripts/balance.mjs  headless career harness — `npm run balance`
 
 ### Tests
 
-`npm test` runs `scripts/scenarios.mjs`: ten scenarios that play whole careers
-through the engine and assert what should always be true — the ladder from
-amateur to the majors actually connects, a weak player is never stranded with
-nowhere to enter, injuries clear and leave a mark, the same seed reproduces the
-same career, a save survives an export/import round trip, retiring and
-un-retiring both work, godmode does what it claims, and the money adds up. It
-takes about nine seconds and has no dependencies.
+`npm test` runs three dependency-free suites (about 45 seconds total, all in
+CI). They are deliberately not unit tests: every bug they have caught was
+emergent, invisible in any single function.
 
-It is worth writing new scenarios rather than unit tests here: every bug it has
-caught was an emergent one, invisible in any single function.
+**`npm run scenarios`** — ten scenarios that play whole careers and assert what
+should always be true. The ladder from amateur to the majors actually connects,
+a weak player is never stranded, injuries clear and leave a mark, the same seed
+reproduces the same career, saves survive an export/import round trip,
+retiring and un-retiring both work, godmode does what it claims, and the money
+adds up.
+
+**`npm run hostile`** — malformed and truncated save files, saves from older
+builds missing fields, every slider at its extreme (NaN ratings, age 1, age
+200, a trillion in debt), button-mashing, out-of-order calls, and degenerate
+playstyles like never entering an event for thirty years. Nothing may crash,
+and the career must stay playable afterwards.
+
+**`npm run fuzz`** — random legal action sequences, tens of thousands of them,
+auditing after every single step: no non-finite numbers, ratings in range, the
+result log in sync with the career totals, no double-booked weeks, and never a
+state where the player has nowhere left to enter.
+
+```bash
+npm run fuzz -- --runs 60 --steps 500 --seed 777
+```
 
 ### The balance harness
 

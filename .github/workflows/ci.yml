@@ -15,8 +15,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # Scenario tests play whole careers through the engine and assert the
-      # invariants that should always hold. ~9s, no dependencies.
+      # Scenario tests play whole careers and assert the invariants that should
+      # always hold; hostile tests throw malformed saves and extreme godmode
+      # values at it; the fuzzer hammers random legal action sequences.
       - run: npm run scenarios
+      - run: npm run hostile
+      - run: npm run fuzz -- --runs 20 --steps 250
       # The balance harness checks the numbers still land where we want them.
       - run: npm run balance -- --careers 3 --until 40

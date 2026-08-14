@@ -1129,12 +1129,15 @@ function prepareOffseason(state, isFirst, rng) {
       .slice(0, 6),
   }
 
-  // A life event, occasionally.
+  // A life event, occasionally. The pool can be empty for a very young
+  // player, and picking from an empty array crashes the offseason.
   if (!isFirst && rng.chance(0.22)) {
     const pool = LIFE_EVENTS.filter((e) => state.player.age >= e.minAge)
-    const ev = rng.pick(pool)
-    applyLifeEvent(state, ev)
-    state.offseason.lifeEvent = ev
+    if (pool.length) {
+      const ev = rng.pick(pool)
+      applyLifeEvent(state, ev)
+      state.offseason.lifeEvent = ev
+    }
   }
 
   refreshDerived(state)
@@ -1153,6 +1156,10 @@ function applyLifeEvent(state, ev) {
 
 /** Commit the offseason and tee up the new year. */
 export function startSeason(state) {
+  // A double-tap on the offseason button can fire this twice before React
+  // re-renders; without this guard the second call ages the player a year and
+  // skips the season they just started.
+  if (state.phase !== 'offseason') return state
   const rng = Rng.from(state.rngState)
   const p = state.player
   const wasFirst = state.offseason?.isFirst

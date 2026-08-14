@@ -65,6 +65,19 @@ export function checkEligibility(state, event) {
     return { ok: false, reason: 'No senior status for this event', qualifier: qualifierChance(state, event) }
   }
 
+  // The Emerging Circuit is the floor of the sport: ordinary events there take
+  // open entries from anybody, at any age, card or no card. Resolved before
+  // every other restriction so that whatever else has gone wrong in a career,
+  // there is always somewhere to tee it up. (Holding partial status used to be
+  // worse than holding none, because the open-entry fallback sat below the
+  // age gate and only applied when status was exactly 'none'.)
+  if (event.circuit === 'emerging' && !event.flagship) {
+    const est = cardStatus(state, 'emerging')
+    if (est === 'full') return { ok: true, via: 'Full card' }
+    if (est === 'conditional') return { ok: true, via: 'Conditional status' }
+    return { ok: true, via: 'Open entry', fee: EMERGING_ENTRY_FEE }
+  }
+
   if (p.age >= SENIOR_AGE + 5 && event.circuit !== 'amateur') {
     // Regular tours quietly stop taking entries from the very old.
     const st = cardStatus(state, event.circuit)
@@ -94,11 +107,6 @@ export function checkEligibility(state, event) {
     return { ok: true, via: 'Conditional status' }
   }
   if (p.rank && p.rank <= 60) return { ok: true, via: `World top 60 (#${p.rank})` }
-  // The Emerging Circuit is effectively open entry — pay the fee and tee off.
-  // It is the floor of the sport, and it means nobody is ever stranded.
-  if (event.circuit === 'emerging' && !event.flagship) {
-    return { ok: true, via: 'Open entry', fee: EMERGING_ENTRY_FEE }
-  }
   return { ok: false, reason: `No ${event.circuit} status`, qualifier: qualifierChance(state, event) }
 }
 
@@ -184,7 +192,8 @@ export function resolveCards(state, rng) {
   if (state.player.age + 1 >= SENIOR_AGE) {
     const st = state.career.wins >= 5 || state.career.majors >= 1 ? 'full' : 'conditional'
     if (cardStatus(state, 'senior') !== 'full') {
-      grantCard(state, 'senior', st, 20)
+      // Senior status does not lapse — you only get older.
+      grantCard(state, 'senior', st, 100)
       notes.push(`You are eligible for the Senior Circuit (${st === 'full' ? 'full' : 'conditional'} status).`)
     }
   }

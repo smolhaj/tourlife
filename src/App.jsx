@@ -132,10 +132,19 @@ export default function App() {
 
   function continueSave() {
     const s = loadGame()
-    if (!s) return toast('No saved career found.', 'bad')
-    historyRef.current.clear()
-    setState(E.refreshDerived(s))
-    setTab('home')
+    if (!s) {
+      clearSave()
+      return toast('That save could not be read, so it has been cleared. Start a new career.', 'bad')
+    }
+    try {
+      historyRef.current.clear()
+      setState(E.refreshDerived(s))
+      setTab('home')
+    } catch (err) {
+      console.error(err)
+      clearSave()
+      toast('That save is damaged and has been cleared. Start a new career.', 'bad')
+    }
   }
 
   function doImport(text) {
