@@ -76,8 +76,14 @@ a { color: var(--green); }
 .grid-main { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); }
 
 @media (max-width: 940px) {
-  .grid-main, .grid-3, .grid-4 { grid-template-columns: minmax(0, 1fr); }
-  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .grid-main { grid-template-columns: minmax(0, 1fr); }
+  .grid-3, .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); }
+  /* Four-up stat headers stay two-up on a phone — one per row is all scroll. */
+  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ------------------------------------------------------------------ header */
@@ -224,6 +230,10 @@ a { color: var(--green); }
   flex-wrap: wrap;
 }
 .simbar .spacer { flex: 1; }
+.sim-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.sim-scroll { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.sim-aux { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; }
+.sim-more { display: none; }
 
 /* ------------------------------------------------------------------ tables */
 
@@ -561,6 +571,64 @@ input[type='range'] { width: 100%; accent-color: var(--gold); }
 .god-row { display: grid; grid-template-columns: 130px 1fr 54px; align-items: center; gap: 10px; }
 .god-row .lbl { font-size: 12px; color: var(--muted); }
 .god-row .out { font-family: var(--mono); text-align: right; font-size: 12px; }
+
+/* ------------------------------------------------------------------ mobile */
+
+@media (max-width: 780px) {
+  .shell { padding: 0 10px 90px; }
+  .topbar-inner { padding: 8px 10px; gap: 10px; }
+  .brand { font-size: 11px; }
+  .brand small { display: none; }
+  .ident .name { font-size: 14px; }
+  .ident .sub { font-size: 11px; }
+
+  /* Keep all five header numbers on one line rather than wrapping a block. */
+  .hstats { width: 100%; margin-left: 0; gap: 0; justify-content: space-between; }
+  .hstat { text-align: center; flex: 1; min-width: 0; }
+  .hstat .k { font-size: 9px; letter-spacing: 0.05em; }
+  .hstat .v { font-size: 13px; }
+
+  .card { padding: 11px; }
+  .tab { padding: 9px 11px; font-size: 12px; }
+
+  /* The sim bar collapses to one row; everything else hides behind "More". */
+  .simbar-inner { flex-direction: column; align-items: stretch; padding: 0 10px; }
+  .sim-row { width: 100%; }
+  .sim-row > .btn.primary { flex: 1 1 auto; }
+  .sim-scroll {
+    overflow-x: auto;
+    flex: 1 1 auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sim-scroll::-webkit-scrollbar { display: none; }
+  .sim-more { display: inline-flex; flex: 0 0 auto; }
+  .sim-aux { display: none; flex-wrap: wrap; }
+  .sim-aux.open { display: flex; }
+  .simbar .btn { min-height: 38px; }
+  .simbar .btn.sm { padding: 7px 11px; font-size: 12px; }
+
+  .toasts { right: 8px; left: 8px; bottom: 72px; max-width: none; }
+
+  .week-grid { grid-template-columns: minmax(0, 1fr); }
+  .rating-row { grid-template-columns: 96px 1fr 40px; }
+  .modal-back { padding: 12px 8px; }
+  .modal-body { padding: 12px; }
+  .modal-head { padding: 12px; }
+  .modal-foot { padding: 10px 12px; }
+  .statgrid { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+  .statcell { padding: 8px 9px; }
+  .statcell .v { font-size: 17px; }
+  .intro-title { font-size: clamp(34px, 11vw, 52px); }
+  .god-row { grid-template-columns: 88px 1fr 40px; }
+}
+
+/* Tables that cannot usefully shrink get their own horizontal scroll rather
+   than squeezing the page. */
+@media (max-width: 780px) {
+  .tbl-wrap { overflow-x: auto; }
+  .tbl-wrap > table.tbl { min-width: 460px; }
+}
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }

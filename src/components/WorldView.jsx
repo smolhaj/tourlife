@@ -36,7 +36,7 @@ function Ranking({ state }) {
   return (
     <div className="grid grid-main">
       <Card title="Official world ranking" aux={`${state.world.players.filter((p) => !p.retired).length} active professionals`}>
-        <div className="scroll-y max-h-420">
+        <div className="scroll-y max-h-420 tbl-wrap">
           <table className="tbl">
             <thead>
               <tr>
@@ -217,7 +217,7 @@ function AllTime({ state }) {
   const rows = allTimeBoard(state)
   return (
     <Card title="All-time greats" aux="legends of the past, plus everybody playing now">
-      <div className="scroll-y max-h-420">
+      <div className="scroll-y max-h-420 tbl-wrap">
         <table className="tbl">
           <thead>
             <tr>
@@ -272,7 +272,7 @@ function SeasonResults({ state }) {
     )
   return (
     <Card title={`${state.year} results across every circuit`} aux={`${rows.length} events completed`}>
-      <div className="scroll-y max-h-420">
+      <div className="scroll-y max-h-420 tbl-wrap">
         <table className="tbl">
           <thead>
             <tr>

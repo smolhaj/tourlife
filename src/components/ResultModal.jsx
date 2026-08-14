@@ -71,6 +71,7 @@ export default function ResultModal({ state, eventId, onClose }) {
         </div>
       ) : null}
 
+      <div className="tbl-wrap">
       <table className="tbl">
         <thead>
           <tr>
@@ -114,6 +115,7 @@ export default function ResultModal({ state, eventId, onClose }) {
           ) : null}
         </tbody>
       </table>
+      </div>
 
       {split && split.gross > 0 ? (
         <>

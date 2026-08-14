@@ -49,6 +49,7 @@ export default function App() {
   const [showRetire, setShowRetire] = useState(false)
   const [showShare, setShowShare] = useState(false)
   const [showJump, setShowJump] = useState(false)
+  const [showMore, setShowMore] = useState(false)
   const historyRef = useRef(new History(20))
   const toastId = useRef(0)
 
@@ -348,43 +349,57 @@ export default function App() {
       {!retired ? (
         <div className="simbar">
           <div className="simbar-inner">
-            {inSeason ? (
-              <>
-                <button className="btn primary" onClick={() => sim('Playing tournament', (d) => E.simNextEvent(d), true)}>
-                  Sim next event
+            <div className="sim-row">
+              {inSeason ? (
+                <>
+                  <button className="btn primary" onClick={() => sim('Playing tournament', (d) => E.simNextEvent(d), true)}>
+                    Sim next event
+                  </button>
+                  <div className="sim-scroll">
+                    <button className="btn" onClick={() => sim('Simming a week', (d) => E.simWeek(d))}>
+                      Sim week
+                    </button>
+                    <button className="btn" onClick={() => sim('Simming to the next major', (d) => E.simToNextMajor(d), true)}>
+                      To next major
+                    </button>
+                    <button className="btn" onClick={() => sim('Simming the season', (d) => E.simToOffseason(d), true)}>
+                      To offseason
+                    </button>
+                    <button className="btn" onClick={() => setShowJump(true)}>
+                      Jump ahead…
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button className="btn primary" onClick={actions.startSeason}>
+                  Start the {state.year + (state.offseason?.isFirst ? 0 : 1)} season
                 </button>
-                <button className="btn" onClick={() => sim('Simming a week', (d) => E.simWeek(d))}>
-                  Sim week
-                </button>
-                <button className="btn" onClick={() => sim('Simming to the next major', (d) => E.simToNextMajor(d), true)}>
-                  To next major
-                </button>
-                <button className="btn" onClick={() => sim('Simming the season', (d) => E.simToOffseason(d), true)}>
-                  To offseason
-                </button>
-                <button className="btn" onClick={() => setShowJump(true)}>
-                  Jump ahead…
-                </button>
-              </>
-            ) : (
-              <button className="btn primary" onClick={actions.startSeason}>
-                Start the {state.year + (state.offseason?.isFirst ? 0 : 1)} season
+              )}
+              <button
+                className={`btn sm ghost sim-more ${showMore ? 'active' : ''}`}
+                onClick={() => setShowMore((v) => !v)}
+                aria-expanded={showMore}
+                aria-label="More actions"
+              >
+                ⋯
               </button>
-            )}
-            <div className="spacer" />
-            <NextUp state={state} />
-            <button className="btn sm ghost" onClick={actions.undo} disabled={!historyRef.current.canUndo()}>
-              ↶ Undo
-            </button>
-            <button className="btn sm ghost" onClick={() => setShowRetire(true)}>
-              Retire…
-            </button>
-            <button className="btn sm ghost" onClick={() => setShowShare(true)}>
-              Share
-            </button>
-            <button className="btn sm ghost" onClick={() => setShowGod(true)}>
-              ⚙ God
-            </button>
+            </div>
+            <div className={`sim-aux ${showMore ? 'open' : ''}`}>
+              <NextUp state={state} />
+              <div className="spacer" />
+              <button className="btn sm ghost" onClick={actions.undo} disabled={!historyRef.current.canUndo()}>
+                ↶ Undo
+              </button>
+              <button className="btn sm ghost" onClick={() => setShowRetire(true)}>
+                Retire…
+              </button>
+              <button className="btn sm ghost" onClick={() => setShowShare(true)}>
+                Share
+              </button>
+              <button className="btn sm ghost" onClick={() => setShowGod(true)}>
+                ⚙ God
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

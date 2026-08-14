@@ -104,7 +104,7 @@ function Seasons({ state, winsByYear }) {
       </div>
 
       <Card title="Season by season">
-        <div className="scroll-x">
+        <div className="scroll-x tbl-wrap">
           <table className="tbl">
             <thead>
               <tr>
@@ -250,7 +250,7 @@ function AllResults({ state }) {
           ))}
         </select>
       </div>
-      <div className="scroll-y max-h-420">
+      <div className="scroll-y max-h-420 tbl-wrap">
         <table className="tbl">
           <thead>
             <tr>
