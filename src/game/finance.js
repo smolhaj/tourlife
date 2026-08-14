@@ -5,16 +5,19 @@ import { inflation } from './schedule.js'
  * Break a prize cheque down the way it actually happens: the caddie and the
  * agent are paid off the gross, then the tax bill lands on what is left.
  */
-export function splitPrize(gross, { pos, madeCut, hasCaddie, agentCut }) {
+export function splitPrize(gross, { pos, madeCut, hasCaddie, agentCut, backerCut = 0 }) {
   if (!gross || !madeCut) {
-    return { gross: 0, caddie: 0, agent: 0, tax: 0, net: 0 }
+    return { gross: 0, caddie: 0, agent: 0, backer: 0, tax: 0, net: 0 }
   }
   const caddieRate = !hasCaddie ? 0 : pos === 1 ? CADDIE_WIN_CUT : pos <= 10 ? CADDIE_TOP10_CUT : CADDIE_BASE_CUT
   const caddie = Math.round(gross * caddieRate)
   const agent = Math.round(gross * agentCut)
-  const taxable = gross - caddie - agent
+  // A backer is paid off the top like everyone else who has a claim on the
+  // cheque before you do.
+  const backer = Math.round(gross * backerCut)
+  const taxable = gross - caddie - agent - backer
   const tax = Math.round(taxable * TAX_RATE)
-  return { gross, caddie, agent, tax, net: taxable - tax }
+  return { gross, caddie, agent, backer, tax, net: taxable - tax }
 }
 
 export function netRate({ hasCaddie, agentCut, pos = 20 }) {
@@ -45,6 +48,112 @@ export function annualExpenses({ lifestyleId, staffCost, startsByCircuit, yearsE
     staff: Math.round(staffCost),
     total: Math.round(living * infl + travel * infl + staffCost),
   }
+}
+
+/**
+ * How deep in the red you can get before nobody will fund you any further.
+ *
+ * Golf careers end at the bank far more often than they end on the range. A
+ * kid on the mini-tours is borrowing from parents and running up cards, and
+ * that runs out somewhere under six figures. Somebody who has banked real
+ * money has a house to remortgage and a name people will lend against, so the
+ * ceiling rises with what you have already earned and how marketable you are —
+ * but it never becomes unlimited.
+ */
+export function borrowingLimit({ careerEarnings = 0, marketability = 0, status = 'pro', yearsElapsed = 0, dependents = 0 }) {
+  const infl = inflation(yearsElapsed)
+  // Family, cards, and a sympathetic uncle.
+  let limit = 85_000
+  // Proven earnings are collateral: a slice of what you have banked in your life.
+  limit += Math.min(careerEarnings * 0.16, 3_200_000)
+  // A name people recognise can raise money on it.
+  limit += marketability * 240_000
+  // Amateurs have no earnings history at all to lend against.
+  if (status === 'amateur') limit *= 0.7
+  // Mouths to feed shorten everybody's patience.
+  limit *= 1 - Math.min(dependents, 3) * 0.09
+  return Math.round(limit * infl)
+}
+
+/** Annual cost of carrying debt. Unsecured borrowing is not cheap. */
+export const DEBT_INTEREST = 0.09
+
+export function debtInterest(cash) {
+  return cash >= 0 ? 0 : Math.round(-cash * DEBT_INTEREST)
+}
+
+/**
+ * Where you stand against that ceiling. `headroom` is what is left to borrow;
+ * once it is gone the season cannot be funded.
+ */
+export function solvency(cash, limit) {
+  const debt = Math.max(0, -cash)
+  const headroom = Math.max(0, limit - debt)
+  const used = limit > 0 ? debt / limit : 0
+  let state = 'clear'
+  if (debt > 0 && used < 0.5) state = 'borrowing'
+  else if (used >= 0.5 && used < 0.85) state = 'stretched'
+  else if (used >= 0.85 && used < 1) state = 'critical'
+  else if (used >= 1) state = 'insolvent'
+  return { debt, limit, headroom, used, state, insolvent: used >= 1 }
+}
+
+export const SOLVENCY_LABEL = {
+  clear: 'In the black',
+  borrowing: 'Borrowing, but comfortably',
+  stretched: 'Stretched',
+  critical: 'Nearly out of credit',
+  insolvent: 'Out of money',
+}
+
+/**
+ * A backer: somebody pays your bills now for a slice of everything you win
+ * later. This is how the bottom of professional golf is actually financed, and
+ * it is the only way out of a hole that does not involve quitting.
+ *
+ * Money follows promise, not need. A twenty-four-year-old with a real ceiling
+ * gets funded; a thirty-eight-year-old journeyman in the same hole does not,
+ * and that asymmetry is the point. Returns null when nobody is interested.
+ */
+export function backerOffer(rng, { age, ovr, potentialOvr, rank, needed, yearsElapsed = 0 }) {
+  const room = Math.max(0, potentialOvr - ovr)
+  // Youth is most of it; a visible ceiling and a decent ranking do the rest.
+  let appeal = 0
+  appeal += Math.max(0, 34 - age) * 0.06
+  appeal += Math.max(0, potentialOvr - 58) * 0.035
+  appeal += Math.min(room, 14) * 0.02
+  if (rank && rank <= 300) appeal += (300 - rank) / 900
+  if (age >= 38) appeal -= 0.5
+  if (appeal < 0.35) return null
+
+  const infl = inflation(yearsElapsed)
+  // They cover the hole and a season on top, within reason.
+  const amount = Math.round(Math.min(Math.max(needed, 120_000 * infl), 1_600_000 * infl))
+  // The less they believe, the more they take.
+  const cut = Math.round(clamp(0.46 - appeal * 0.16, 0.18, 0.46) * 100) / 100
+  const years = appeal > 0.9 ? 3 : appeal > 0.6 ? 4 : 5
+  return {
+    id: `backer_${Math.round(amount)}_${Math.round(cut * 100)}`,
+    amount,
+    cut,
+    years,
+    name: rng ? rng.pick(BACKER_NAMES) : BACKER_NAMES[0],
+    appeal: Math.round(appeal * 100) / 100,
+  }
+}
+
+const BACKER_NAMES = [
+  'a group of members at your home club',
+  'a former tour pro turned investor',
+  'a local car dealership owner',
+  'your old college coach and two of his friends',
+  'a syndicate that stakes mini-tour players',
+  'an equipment rep who believes in you',
+  'a family friend with more money than sense',
+]
+
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v
 }
 
 /**

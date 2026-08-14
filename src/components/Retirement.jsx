@@ -107,8 +107,16 @@ export function RetiredScreen({ state, onNewCareer, onExport, onUnretire }) {
             {lbl.label}
           </h1>
           <div className="muted">
-            Retired at {c.retiredAge}. {majorNarrative(c.majors).label}.
+            {p.foldedBroke
+              ? `The money ran out at ${c.retiredAge}. ${majorNarrative(c.majors).label}.`
+              : `Retired at ${c.retiredAge}. ${majorNarrative(c.majors).label}.`}
           </div>
+          {p.foldedBroke ? (
+            <div className="small muted-2" style={{ marginTop: 8, maxWidth: 560, margin: '8px auto 0' }}>
+              Not a decision — a bank balance. Entry fees and flights come due before prize money does, and there was
+              nobody left to borrow from. There is a job at a club back home, and you take it.
+            </div>
+          ) : null}
         </div>
         <StatGrid>
           <Stat k="Majors" v={c.majors} tone={c.majors ? 'gold' : ''} />

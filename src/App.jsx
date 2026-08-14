@@ -284,10 +284,27 @@ export default function App() {
         }),
       startSeason: () =>
         run('start season', (d) => {
+          // Entry fees and flights are due before any prize money arrives, so a
+          // player with no credit left cannot start a season at all.
+          const fund = E.canFundSeason(d)
+          if (!fund.ok) {
+            E.foldCareer(d)
+            setTab('home')
+            return { toast: 'The money ran out. Your career is over.', toastKind: 'bad' }
+          }
           E.startSeason(d)
           setTab('home')
           return { toast: `${d.year} season under way.`, toastKind: 'good' }
         }),
+      acceptBacker: () =>
+        run('take a backer', (d) => {
+          const offer = d.offseason?.backerOffer
+          E.acceptBacker(d)
+          return offer
+            ? { toast: `${offer.name} put up ${fmtMoney(offer.amount, { compact: true })}.`, toastKind: 'good' }
+            : null
+        }),
+      declineBacker: () => run('decline backer', (d) => E.declineBacker(d), { snapshot: false }),
       undo: () => {
         const entry = historyRef.current.undo(state)
         if (!entry) return toast('Nothing to undo.', 'bad')

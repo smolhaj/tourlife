@@ -5,13 +5,16 @@ import {
   GAME_VERSION,
   SENIOR_AGE,
   TRAINING_OPTIONS,
+  WINTER_WORK_PAY,
   lifestyleById,
+  TRAVEL_COST,
 } from './constants.js'
 import { makeRatings, overall, progressYear, jigglePotential } from './ratings.js'
 import { regionById } from './names.js'
 import {
   createFixtures,
   buildSeason,
+  inflation,
   PLAYING_WEEKS,
   MAJOR_WEEKS,
 } from './schedule.js'
@@ -57,6 +60,10 @@ import {
   investmentReturn,
   coastStatus,
   fmtMoney,
+  borrowingLimit,
+  solvency,
+  debtInterest,
+  backerOffer,
 } from './finance.js'
 import {
   makeHighlight,
@@ -308,6 +315,107 @@ export function currentBurn(state) {
     dependents: state.finance.dependents,
     amateur: state.player.status === 'amateur',
   }).total
+}
+
+/** What this player could still borrow, given what they have earned and who they are. */
+export function playerBorrowingLimit(state) {
+  return borrowingLimit({
+    careerEarnings: state.career.careerEarnings,
+    marketability: marketability(state.player, state.career),
+    status: state.player.status,
+    yearsElapsed: state.yearsElapsed,
+    dependents: state.finance.dependents,
+  })
+}
+
+/** Where the player stands against that ceiling. */
+export function playerSolvency(state) {
+  return solvency(state.finance.cash, playerBorrowingLimit(state))
+}
+
+/**
+ * How many tournaments this player can actually pay to enter next season.
+ *
+ * Travel and entry fees are due long before any prize money arrives, so a
+ * bankroll is a hard limit on a schedule. At the bottom of the game this is the
+ * decision that shapes a career: fly to everything and go broke, or play the
+ * events you can drive to and hope one of them turns into something.
+ */
+export function seasonBudget(state) {
+  const s = playerSolvency(state)
+  const ls = lifestyleById(state.finance.lifestyle)
+  const infl = inflation(state.yearsElapsed + 1)
+  const amateur = state.player.status === 'amateur'
+  const living = ls.cost * (1 + Math.min(state.finance.dependents, 4) * 0.18) * (amateur ? 0.35 : 1) * infl
+  const staff = annualStaffCost(state.staff)
+
+  // Count on last season's money, discounted — this year might be worse.
+  const last = state.career.seasons[state.career.seasons.length - 1]
+  const expected = last ? Math.max(0, (last.prizeNet || 0) * 0.7 + (last.endorse || 0) * 0.9) : 0
+  const sponsorNow = sponsorIncome(state.sponsors.deals) * 0.65
+
+  return Math.round(state.finance.cash + s.headroom + expected + sponsorNow - living - staff)
+}
+
+/** What the schedule as currently entered will cost to travel to. */
+export function plannedTravelCost(state) {
+  const infl = inflation(state.yearsElapsed + (state.phase === 'offseason' ? 1 : 0))
+  let total = 0
+  for (const [circuit, n] of Object.entries(projectedStartsByCircuit(state))) {
+    total += (TRAVEL_COST[circuit] || 8000) * n * infl
+  }
+  return Math.round(total)
+}
+
+/**
+ * Drop events off the back of the schedule until the travel bill fits what can
+ * actually be paid. Majors and the cheapest events survive longest, which is
+ * what a broke player does in practice: skip the long-haul weeks, drive to the
+ * ones nearby, and never miss a major you are exempt for.
+ */
+export function trimScheduleToBudget(state) {
+  const target = state.phase === 'offseason' ? state.nextEntered : state.entered
+  const list = state.phase === 'offseason' ? state.nextSeason : state.season
+  const budget = seasonBudget(state)
+  let dropped = 0
+  // Most expensive and least valuable go first.
+  const entered = Object.keys(target)
+    .filter((id) => target[id])
+    .map((id) => list.find((e) => e.id === id))
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (!!a.isMajor !== !!b.isMajor) return a.isMajor ? 1 : -1
+      const ca = TRAVEL_COST[a.circuit] || 8000
+      const cb = TRAVEL_COST[b.circuit] || 8000
+      if (ca !== cb) return cb - ca
+      return (a.purse || 0) - (b.purse || 0)
+    })
+  // Always leave enough of a season to be worth turning up for.
+  const floor = 6
+  for (const ev of entered) {
+    if (plannedTravelCost(state) <= budget) break
+    if (Object.values(target).filter(Boolean).length <= floor) break
+    delete target[ev.id]
+    dropped += 1
+  }
+  return dropped
+}
+
+/** How many starts the bankroll will carry, for the schedule screen to show. */
+export function affordableStarts(state) {
+  const budget = seasonBudget(state)
+  const infl = inflation(state.yearsElapsed + 1)
+  const amateur = state.player.status === 'amateur'
+  const circuits = Object.keys(projectedStartsByCircuit(state))
+  const costs = (circuits.length ? circuits : [amateur ? 'amateur' : 'emerging']).map((c) => TRAVEL_COST[c] || 8000)
+  const perStart = (costs.reduce((a, b) => a + b, 0) / costs.length) * infl
+  return clamp(Math.floor(budget / Math.max(1, perStart)), 0, 40)
+}
+
+/** The share of every cheque that belongs to a backer before it reaches you. */
+export function backerCutOf(state) {
+  const b = state.finance.backer
+  return b && b.yearsLeft > 0 ? b.cut : 0
 }
 
 // ------------------------------------------------------------ field building
@@ -564,7 +672,9 @@ function recordUserResult(state, event, outcome, rng, byPid) {
     madeCut: row.madeCut,
     hasCaddie: !!state.staff.caddie,
     agentCut: agentCut(state.staff),
+    backerCut: backerCutOf(state),
   })
+  if (split.backer > 0 && state.finance.backer) state.finance.backer.paidBack += split.backer
 
   // Open-entry mini-tour events cost you money to tee up in.
   if (event.circuit === 'emerging' && cardStatus(state, 'emerging') === 'none') {
@@ -1082,6 +1192,22 @@ function endSeason(state, rng) {
   state.finance.cash -= expenses.total
   if (state.finance.passiveIncome) state.finance.cash += state.finance.passiveIncome
 
+  // Winter work: the pro shop and the lesson tee, taken instead of practice.
+  const training = TRAINING_OPTIONS.find((t) => t.id === state.training.choice)
+  let workPay = 0
+  if (training?.work) {
+    workPay = Math.round(WINTER_WORK_PAY * inflation(state.yearsElapsed))
+    state.finance.cash += workPay
+  }
+
+  // Debt is not free. Carrying it costs you every year you carry it, which is
+  // what turns a bad season into the thing that ends a career.
+  const interest = debtInterest(state.finance.cash)
+  if (interest > 0) {
+    state.finance.cash -= interest
+    state.finance.interestPaid = (state.finance.interestPaid || 0) + interest
+  }
+
   const invest = investmentReturn(rng, Math.max(0, state.finance.cash))
   state.finance.cash += invest
 
@@ -1099,6 +1225,8 @@ function endSeason(state, rng) {
     prizeNet: st.prizeNet,
     endorse: endorse.net,
     expenses: expenses.total,
+    workPay,
+    interest,
     invest,
     cashEnd: Math.round(state.finance.cash),
     points: Math.round(st.points),
@@ -1112,8 +1240,23 @@ function endSeason(state, rng) {
   if (p.rank && p.rank <= 10) state.career.seasonsTop10 += 1
 
   if (state.finance.cash < 0) {
-    pushNews(state, 'You finished the year in the red. Something has to give.', 'bad')
-    p.morale = clamp(p.morale - 8, 0, 100)
+    const s = playerSolvency(state)
+    p.morale = clamp(p.morale - (s.state === 'critical' || s.state === 'insolvent' ? 12 : 8), 0, 100)
+    if (s.state === 'insolvent') {
+      pushNews(
+        state,
+        `You are ${fmtMoney(s.debt)} down and nobody will lend you another penny. Next season has to be paid for somehow.`,
+        'major',
+      )
+    } else if (s.state === 'critical') {
+      pushNews(
+        state,
+        `${fmtMoney(s.headroom)} of credit left. One more year like that and the decision gets made for you.`,
+        'bad',
+      )
+    } else {
+      pushNews(state, 'You finished the year in the red. Something has to give.', 'bad')
+    }
   }
 
   // A long major drought is a story in itself.
@@ -1188,6 +1331,32 @@ function prepareOffseason(state, isFirst, rng) {
       .slice(0, 6),
   }
 
+  // A backer's contract runs down whether it paid off or not.
+  if (!isFirst && state.finance.backer && state.finance.backer.yearsLeft > 0) {
+    state.finance.backer.yearsLeft -= 1
+    if (state.finance.backer.yearsLeft === 0) {
+      state.offseason.backerEnded = state.finance.backer
+      pushNews(state, `Your deal with ${state.finance.backer.name} is up. Every cheque is yours again.`, 'good')
+    }
+  }
+
+  // Somebody may be willing to fund a player in trouble — if they can see a
+  // reason to. Money follows promise, so this is offered on the way down, not
+  // at the bottom, and only to people with something left to bet on.
+  const solv = playerSolvency(state)
+  state.offseason.solvency = solv
+  const alreadyBacked = state.finance.backer && state.finance.backer.yearsLeft > 0
+  if (!isFirst && !alreadyBacked && (solv.state === 'stretched' || solv.state === 'critical' || solv.insolvent)) {
+    state.offseason.backerOffer = backerOffer(rng, {
+      age: state.player.age,
+      ovr: overall(state.player.ratings),
+      potentialOvr: overall(state.player.potential),
+      rank: state.player.rank,
+      needed: solv.debt + currentBurn(state) * 0.6,
+      yearsElapsed: state.yearsElapsed,
+    })
+  }
+
   // A life event, occasionally. The pool can be empty for a very young
   // player, and picking from an empty array crashes the offseason.
   if (!isFirst && rng.chance(0.22)) {
@@ -1214,6 +1383,37 @@ function applyLifeEvent(state, ev) {
 }
 
 /** Commit the offseason and tee up the new year. */
+/**
+ * Can next season actually be paid for? Entry fees, flights and hotels are due
+ * before any prize money arrives, so a player with no credit left cannot tee
+ * up however much they want to. This is the wall most careers hit.
+ */
+export function canFundSeason(state) {
+  const s = playerSolvency(state)
+  if (!s.insolvent) return { ok: true, solvency: s }
+  return {
+    ok: false,
+    solvency: s,
+    reason: `You owe ${fmtMoney(s.debt)} and there is no credit left to fly to a tournament on.`,
+  }
+}
+
+/**
+ * The way careers actually end at the bottom of the game: not a decision, a
+ * bank balance. Kept separate from retire() so the ending reads as what it is.
+ */
+export function foldCareer(state) {
+  const s = playerSolvency(state)
+  addHighlight(state, 'milestone', {
+    title: 'The money ran out',
+    text: `${fmtMoney(s.debt)} in debt at ${state.player.age} with nobody left to borrow from. There is a job at a club back home, and you take it.`,
+    importance: 5,
+  })
+  retire(state, 'ran out of money')
+  state.player.foldedBroke = true
+  return state
+}
+
 export function startSeason(state) {
   // A double-tap on the offseason button can fire this twice before React
   // re-renders; without this guard the second call ages the player a year and
@@ -1422,6 +1622,19 @@ export function autoOffseason(state, opts = {}) {
   const rng = Rng.from(state.rngState)
   state.rngState = rng.s
   if (state.player.status === 'amateur' && state.player.age >= 21) state.pendingTurnPro = true
+
+  // Money first, because it decides whether there is a season at all. Take a
+  // backer if one is on the table, and if there is not and the credit is gone,
+  // the career is over however good the swing still is.
+  // Only sign your winnings away when the alternative is not playing. A single
+  // stretched year is not a reason to give a stranger a quarter of your career.
+  const solvNow = playerSolvency(state).state
+  if (state.offseason?.backerOffer && (solvNow === 'critical' || solvNow === 'insolvent')) acceptBacker(state)
+  if (!canFundSeason(state).ok) {
+    foldCareer(state)
+    return
+  }
+
   // No card and no exemption means Q-School, every year, until it works.
   const hasCard = ['domestic', 'intl', 'asian', 'emerging'].some((c) => cardStatus(state, c) === 'full')
   const goingPro = state.player.status === 'pro' || state.pendingTurnPro
@@ -1429,6 +1642,10 @@ export function autoOffseason(state, opts = {}) {
   // Re-evaluate every year — a focus chosen five seasons ago is rarely still
   // the right one.
   state.training.choice = pickAutoTraining(state)
+  // Somebody who cannot pay their bills spends the winter earning, not drilling.
+  if (playerSolvency(state).state === 'critical' || state.finance.cash < -currentBurn(state) * 0.4) {
+    state.training.choice = 'work'
+  }
   // Take the best sponsorship offers that are on the table.
   for (const offer of state.sponsors.offers.slice()) {
     acceptOffer(state, offer.id)
@@ -1437,6 +1654,8 @@ export function autoOffseason(state, opts = {}) {
   autoHireStaff(state)
   autoBuyEquipment(state)
   autoFillSchedule(state, opts.targetStarts)
+  // You cannot enter what you cannot pay to travel to.
+  trimScheduleToBudget(state)
 }
 
 /** Live within your means — what a sensible person would do between seasons. */
@@ -1552,6 +1771,44 @@ export function buyEquipment(state, slot, itemId) {
   state.finance.cash -= item.price
   state.bag[slot] = { ...item }
   refreshDerived(state)
+  return state
+}
+
+/**
+ * Take the money. They clear what you owe and fund the season; they own a
+ * share of everything you win until the term is up.
+ */
+export function acceptBacker(state) {
+  const offer = state.offseason?.backerOffer
+  if (!offer) return state
+  state.finance.cash += offer.amount
+  state.finance.backer = {
+    name: offer.name,
+    cut: offer.cut,
+    years: offer.years,
+    yearsLeft: offer.years,
+    amount: offer.amount,
+    signedYear: state.year,
+    paidBack: 0,
+  }
+  state.offseason.backerOffer = null
+  state.offseason.solvency = playerSolvency(state)
+  pushNews(
+    state,
+    `${offer.name} put up ${fmtMoney(offer.amount)}. They take ${Math.round(offer.cut * 100)}% of your winnings for ${plural(offer.years, 'year')}.`,
+    'info',
+  )
+  addHighlight(state, 'milestone', {
+    title: 'Somebody bet on you',
+    text: `${offer.amount >= 500_000 ? 'Serious money' : 'Enough to keep going'} from ${offer.name}, against ${Math.round(offer.cut * 100)}% of everything you win for ${plural(offer.years, 'year')}.`,
+    importance: 2,
+  })
+  refreshDerived(state)
+  return state
+}
+
+export function declineBacker(state) {
+  if (state.offseason) state.offseason.backerOffer = null
   return state
 }
 
@@ -1804,8 +2061,17 @@ export function retirementPressure(state) {
     reasons.push({ label: 'Decline', detail: `${ovrDrop.toFixed(1)} below your peak`, weight: ovrDrop * 1.8 })
   }
   if (state.finance.cash < 0) {
-    pressure += 22
-    reasons.push({ label: 'Money', detail: 'You are in debt', weight: 22 })
+    const s = playerSolvency(state)
+    const weight = s.state === 'insolvent' ? 60 : s.state === 'critical' ? 40 : s.state === 'stretched' ? 28 : 18
+    pressure += weight
+    reasons.push({
+      label: 'Money',
+      detail:
+        s.state === 'insolvent'
+          ? `${fmtMoney(s.debt)} down with no credit left`
+          : `${fmtMoney(s.debt)} down, ${fmtMoney(s.headroom)} left to borrow`,
+      weight,
+    })
   }
   if (coast.reached) {
     pressure += 14

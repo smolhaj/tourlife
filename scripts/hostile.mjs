@@ -194,13 +194,35 @@ section('Degenerate playstyles')
   check('legacy of an empty career is zero-ish', E.legacyScore(quitter.career, quitter.player) < 20)
   rendersCleanly(quitter, 'day-one retiree')
 
-  // Bankrupt for decades.
+  // Bankrupt. This used to assert that debt could not stop you playing, which
+  // was true and was the problem: entry fees and flights are due before any
+  // prize money arrives, so running out of credit now ends a career. What the
+  // check is really for is that the ending is orderly rather than a crash.
   const broke = E.newGame({ name: 'Broke', seed: 55, talent: 0.15, age: 21 })
   god.addCash(broke, -5_000_000)
   for (let i = 0; i < 15; i++) { E.autoOffseason(broke); E.startSeason(broke); E.simToOffseason(broke) }
-  check('a deeply bankrupt career keeps running', Number.isFinite(broke.finance.cash))
-  check('bankruptcy does not stop you entering events', broke.career.starts > 50, `${broke.career.starts} starts`)
+  check('a hopelessly indebted career ends rather than grinding on', broke.player.retired)
+  check('and ends as broke, not as a decision', broke.player.foldedBroke === true)
+  check('the state survives it', Number.isFinite(broke.finance.cash))
+  check('driving a folded career further changes nothing', (() => {
+    const starts = broke.career.starts
+    for (let i = 0; i < 5; i++) { E.autoOffseason(broke); E.startSeason(broke); E.simToOffseason(broke) }
+    return broke.career.starts === starts
+  })(), `${broke.career.starts} starts`)
   rendersCleanly(broke, 'bankrupt')
+
+  // Debt you can still service must not stop you: only the ceiling does.
+  const indebted = E.newGame({ name: 'Indebted', seed: 56, talent: 0.55, age: 23 })
+  E.turnPro(indebted)
+  god.addCash(indebted, -40_000)
+  for (let i = 0; i < 4 && !indebted.player.retired; i++) {
+    E.autoOffseason(indebted)
+    if (indebted.player.retired) break
+    E.startSeason(indebted)
+    E.simToOffseason(indebted)
+  }
+  check('manageable debt does not end a career', indebted.career.starts > 20, `${indebted.career.starts} starts`)
+  rendersCleanly(indebted, 'in the red but solvent')
 }
 
 // ---------------------------------------------------------------------------

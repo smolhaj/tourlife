@@ -1,9 +1,10 @@
 import React from 'react'
 import { LIFESTYLES, TAX_RATE, STAFF_ROLES } from '../game/constants.js'
-import { fmtMoney, coastStatus, netRate, annualExpenses, splitPrize } from '../game/finance.js'
-import { currentBurn } from '../game/engine.js'
+import { fmtMoney, coastStatus, netRate, annualExpenses, splitPrize, SOLVENCY_LABEL, DEBT_INTEREST } from '../game/finance.js'
+import { currentBurn, playerSolvency, backerCutOf } from '../game/engine.js'
 import { annualStaffCost, agentCut } from '../game/staff.js'
 import { sponsorIncome, marketability } from '../game/sponsors.js'
+import { plural } from '../game/narrative.js'
 import { Card, Stat, StatGrid, Chip, Money, Empty, ProgressBar, Sparkline } from './ui.jsx'
 
 export default function MoneyView({ state, onSetLifestyle }) {
@@ -22,11 +23,14 @@ export default function MoneyView({ state, onSetLifestyle }) {
   const rate = netRate({ hasCaddie: !!state.staff.caddie, agentCut: agentCut(state.staff), pos: 15 })
   const seasons = state.career.seasons
 
+  const backer = state.finance.backer && state.finance.backer.yearsLeft > 0 ? state.finance.backer : null
+  const solv = playerSolvency(state)
   const sample = splitPrize(1_000_000, {
     pos: 1,
     madeCut: true,
     hasCaddie: !!state.staff.caddie,
     agentCut: agentCut(state.staff),
+    backerCut: backerCutOf(state),
   })
 
   return (
@@ -50,6 +54,13 @@ export default function MoneyView({ state, onSetLifestyle }) {
                 <td className="num red">−{fmtMoney(sample.agent)}</td>
                 <td className="num muted-2">{((sample.agent / sample.gross) * 100).toFixed(0)}%</td>
               </tr>
+              {backer ? (
+                <tr>
+                  <td className="muted">Backer ({backer.name})</td>
+                  <td className="num red">−{fmtMoney(sample.backer)}</td>
+                  <td className="num muted-2">{Math.round(backer.cut * 100)}%</td>
+                </tr>
+              ) : null}
               <tr>
                 <td className="muted">Tax</td>
                 <td className="num red">−{fmtMoney(sample.tax)}</td>
@@ -166,6 +177,64 @@ export default function MoneyView({ state, onSetLifestyle }) {
             <Stat k="Endorsements" v={fmtMoney(state.career.endorsementTotal, { compact: true })} s="net, career" />
           </StatGrid>
         </Card>
+
+        <Card
+          title="Credit"
+          aux={SOLVENCY_LABEL[solv.state]}
+        >
+          {solv.debt > 0 ? (
+            <>
+              <ProgressBar
+                value={Math.min(1, solv.used)}
+                max={1}
+                tone={
+                  solv.state === 'insolvent' || solv.state === 'critical'
+                    ? 'var(--red)'
+                    : solv.state === 'stretched'
+                      ? 'var(--orange)'
+                      : 'var(--gold)'
+                }
+              />
+              <div className="row between small" style={{ marginTop: 6 }}>
+                <span className="muted">Owed</span>
+                <span className="mono red">{fmtMoney(solv.debt)}</span>
+              </div>
+              <div className="row between small">
+                <span className="muted">Still borrowable</span>
+                <span className={`mono ${solv.headroom <= 0 ? 'red' : ''}`}>{fmtMoney(solv.headroom)}</span>
+              </div>
+              <div className="row between small">
+                <span className="muted">Interest this year</span>
+                <span className="mono red">−{fmtMoney(Math.round(solv.debt * DEBT_INTEREST))}</span>
+              </div>
+              <div className="xs muted-2" style={{ marginTop: 8, lineHeight: 1.5 }}>
+                {solv.state === 'insolvent'
+                  ? 'There is no more credit. Entry fees and flights are due before any prize money arrives, so unless somebody funds you, this is where the career ends.'
+                  : solv.state === 'critical'
+                    ? 'Almost nothing left to borrow. Cut the schedule, cut the staff, or find a backer.'
+                    : `Lenders will go to about ${fmtMoney(solv.limit)} for someone with your earnings and profile.`}
+              </div>
+            </>
+          ) : (
+            <div className="small muted">
+              Nothing owed. If it ever goes the other way, you could borrow up to about{' '}
+              <b>{fmtMoney(solv.limit)}</b> against what you have earned before anybody stops lending.
+            </div>
+          )}
+        </Card>
+
+        {backer ? (
+          <Card title="Your backer" aux={`${plural(backer.yearsLeft, 'year')} left`}>
+            <div className="small">
+              <b className="gold">{backer.name}</b> put up {fmtMoney(backer.amount)} in {backer.signedYear}. They take{' '}
+              <b>{Math.round(backer.cut * 100)}%</b> of your winnings until {backer.signedYear + backer.years}.
+            </div>
+            <div className="row between small" style={{ marginTop: 6 }}>
+              <span className="muted">Paid to them so far</span>
+              <span className="mono">{fmtMoney(backer.paidBack || 0)}</span>
+            </div>
+          </Card>
+        ) : null}
 
         <Card title="Financial independence">
           <div className="col gap-sm">
