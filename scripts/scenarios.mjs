@@ -8,6 +8,7 @@ import * as E from '../src/game/engine.js'
 import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS, CIRCUITS, COURSE_TYPES, PAYOUT_PCT } from '../src/game/constants.js'
 import { overall, progressYear, emptyRatings } from '../src/game/ratings.js'
 import { simTournament, makeEntrant } from '../src/game/tournament.js'
+import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf } from '../src/game/staff.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney } from '../src/game/finance.js'
@@ -774,6 +775,60 @@ section('SCENARIO 16 — a tournament pays out its purse, no more and no less')
   const maxCut = Math.max(...Object.values(CIRCUITS).map((c) => c.cutSize))
   check('the payout table covers the largest cut', PAYOUT_PCT.length >= maxCut,
     `${PAYOUT_PCT.length} places for a cut of ${maxCut}`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 17 — what the Team screen claims quality buys is true')
+{
+  // qualityEffect() tells the player, in shots and rating points, what a hire
+  // is worth. Those figures are written out as prose, so they can drift away
+  // from the functions they describe without anything failing. Pin the
+  // identities the wording is built on: if one of these fails, the sentence in
+  // staff.js needs rewriting, not the assertion relaxing.
+  const q = 0.62
+  const coach = { coach: { q, trait: 'putting', traitAttr: 'putting' }, caddie: null, psych: null, physio: null, agent: null }
+  check('coach: quality x 0.85 outside their specialty',
+    Math.abs(coachTrainingBonus(coach, 'irons') - q * 0.85) < 1e-9,
+    `${coachTrainingBonus(coach, 'irons')} vs ${q * 0.85}`)
+  check('coach: +0.55 more inside it',
+    Math.abs(coachTrainingBonus(coach, 'putting') - (q * 0.85 + 0.55)) < 1e-9,
+    `${coachTrainingBonus(coach, 'putting')} vs ${q * 0.85 + 0.55}`)
+
+  const ordinary = { isMajor: false, flagship: false }
+  const cad = staffMatchdayEffect({ caddie: { q, trait: 'none' }, psych: null }, ordinary)
+  check('caddie: quality x 0.8 in playing quality', Math.abs(cad.quality - q * 0.8) < 1e-9, `${cad.quality} vs ${q * 0.8}`)
+  check('caddie: variance cut by quality x 7%', Math.abs(cad.sigmaMult - (1 - q * 0.07)) < 1e-9,
+    `${cad.sigmaMult} vs ${1 - q * 0.07}`)
+
+  const psy = staffMatchdayEffect({ caddie: null, psych: { q, trait: 'none' } }, ordinary)
+  check('psych: quality x 0.5 on an ordinary week', Math.abs(psy.quality - q * 0.5) < 1e-9, `${psy.quality} vs ${q * 0.5}`)
+  const psyMajor = staffMatchdayEffect({ caddie: null, psych: { q, trait: 'none' } }, { isMajor: true, flagship: false })
+  check('psych: 1.8x that in a major', Math.abs(psyMajor.quality - q * 0.5 * 1.8) < 1e-9,
+    `${psyMajor.quality} vs ${q * 0.5 * 1.8}`)
+
+  // Physio's claim is about progressYear's decline shield, not a staff.js call.
+  const ratings = {}
+  const potential = {}
+  for (const k of ATTR_KEYS) { ratings[k] = 70; potential[k] = 70 }
+  const declineAt = (physio) => {
+    let total = 0
+    for (let i = 0; i < 400; i++) total += progressYear(ratings, potential, 40, new Rng(700 + i), { physio }).ratings.power
+    return total / 400
+  }
+  const shielded = declineAt(q)
+  const bare = declineAt(0)
+  check('physio: measurably slows the decline', shielded > bare,
+    `power at 40 with a physio ${shielded.toFixed(2)} vs without ${bare.toFixed(2)}`)
+  console.log(`   physio at quality 62 holds power at ${shielded.toFixed(2)} against ${bare.toFixed(2)} unaided`)
+
+  // And every role must actually produce a sentence.
+  for (const role of ['coach', 'caddie', 'physio', 'psych', 'agent']) {
+    const text = qualityEffect(role, q)
+    check(`${role}: has an explanation on the Team screen`, typeof text === 'string' && text.length > 30, JSON.stringify(text))
+    check(`${role}: no NaN or undefined in it`, !/NaN|undefined/.test(text), text)
+  }
+  check('quality reads out of 100', qualityOf({ q: 0.62 }) === 62, String(qualityOf({ q: 0.62 })))
+  check('no staff means no quality', qualityOf(null) === 0)
 }
 
 // ---------------------------------------------------------------------------
