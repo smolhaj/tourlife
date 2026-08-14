@@ -1,0 +1,21 @@
+{
+  "name": "tour-life",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Tour Life — a golf career simulator inspired by ZenGM",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "balance": "node scripts/balance.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
+  }
+}
