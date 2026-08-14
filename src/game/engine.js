@@ -322,16 +322,26 @@ function startsBudget(p) {
   return Math.max(8, Math.round(base + p.propensity * span - old))
 }
 
-function aiPlayable(p, event) {
+/** Could this player enter at all — right circuit, right age, fit to tee off. */
+function aiEligible(p, event) {
   if (p.retired) return false
   if (p.injury && p.injury.out) return false
-  // Majors are the exception — nobody sits one out to manage their schedule.
-  if (!event.isMajor && p.season.starts >= startsBudget(p)) return false
   if (event.circuit === 'senior') return p.age >= SENIOR_AGE
   if (p.age >= SENIOR_AGE) return false
   if (event.circuit === 'amateur') return p.homeCircuit === 'amateur'
   if (p.homeCircuit === 'amateur') return event.circuit === 'emerging'
   return true
+}
+
+/**
+ * Has this player got a start left in the season they planned? A preference,
+ * not a hard gate — see selectField, which will pull in players who are past
+ * their budget rather than run a tournament with nobody in it.
+ *
+ * Majors are the exception — nobody sits one out to manage their schedule.
+ */
+function hasStartsLeft(p, event) {
+  return event.isMajor || p.season.starts < startsBudget(p)
 }
 
 function affinity(p, event) {
@@ -360,7 +370,7 @@ function circuitPool(state, event, cache) {
   }
   let pool = cache.get(event.circuit)
   if (!pool) {
-    pool = active.filter((p) => aiPlayable(p, event))
+    pool = active.filter((p) => aiEligible(p, event))
     cache.set(event.circuit, pool)
   }
   return pool
@@ -399,23 +409,48 @@ function selectField(state, event, rng, includeUser, cache) {
   }
 
   // Weighted reservoir (exponential-race form) for the rest of the field.
-  const need = size - chosen.length - (includeUser ? 1 : 0)
+  let need = size - chosen.length - (includeUser ? 1 : 0)
   if (need <= 0) return chosen
 
-  const remaining = []
-  for (const p of pool) {
-    if (used.size && used.has(p.pid)) continue
-    let aff = affinity(p, event)
-    if (aff <= 0) continue
-    if (aff < THIN_AFFINITY) {
-      if (rng.next() * THIN_AFFINITY > aff) continue
-      aff = THIN_AFFINITY
+  /** Race `candidates` and take the best `count`, skipping anyone already in. */
+  const draft = (candidates, count) => {
+    const remaining = []
+    for (const p of candidates) {
+      if (used.size && used.has(p.pid)) continue
+      let aff = affinity(p, event)
+      if (aff <= 0) continue
+      if (aff < THIN_AFFINITY) {
+        if (rng.next() * THIN_AFFINITY > aff) continue
+        aff = THIN_AFFINITY
+      }
+      const w = aff * p.propensity * (1 + clamp(p.rankPoints / 120, 0, 1.4))
+      remaining.push({ p, key: -Math.log(rng.next() + 1e-12) / w })
     }
-    const w = aff * p.propensity * (1 + clamp(p.rankPoints / 120, 0, 1.4))
-    remaining.push({ p, key: -Math.log(rng.next() + 1e-12) / w })
+    remaining.sort((a, b) => a.key - b.key)
+    const take = Math.min(count, remaining.length)
+    for (let i = 0; i < take; i++) {
+      chosen.push(remaining[i].p)
+      used.add(remaining[i].p.pid)
+    }
+    return take
   }
-  remaining.sort((a, b) => a.key - b.key)
-  for (let i = 0; i < need && i < remaining.length; i++) chosen.push(remaining[i].p)
+
+  const fresh = []
+  const spent = []
+  for (const p of pool) (hasStartsLeft(p, event) ? fresh : spent).push(p)
+
+  need -= draft(fresh, need)
+
+  /**
+   * Whoever is left is past the schedule they planned, and normally that is
+   * where selection stops. But a circuit whose whole roster is smaller than one
+   * field — the senior tour, with about fifty players and room for
+   * seventy-eight — has everyone playing every week, so everyone runs out of
+   * starts in the same week and every event after it had an empty field. The
+   * player then teed off alone, shot whatever they shot, and collected the
+   * winner's cheque. Ask the tired ones rather than stage that.
+   */
+  if (need > 0 && spent.length) draft(spent, need)
 
   return chosen
 }

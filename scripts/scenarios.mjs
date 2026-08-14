@@ -5,8 +5,9 @@
 // engine API and checks invariants after every season.
 
 import * as E from '../src/game/engine.js'
-import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS } from '../src/game/constants.js'
-import { overall, progressYear } from '../src/game/ratings.js'
+import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS, CIRCUITS, COURSE_TYPES, PAYOUT_PCT } from '../src/game/constants.js'
+import { overall, progressYear, emptyRatings } from '../src/game/ratings.js'
+import { simTournament, makeEntrant } from '../src/game/tournament.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney } from '../src/game/finance.js'
@@ -674,6 +675,105 @@ section('SCENARIO 14 — the training choice is actually a choice')
   check('training pays more where there is headroom', roomy > maxed + 0.3,
     `putting (25 spare) gained ${roomy.toFixed(2)}/yr vs irons (maxed) ${maxed.toFixed(2)}/yr`)
   console.log(`   headroom check: +25 spare gains ${roomy.toFixed(2)}/yr, at ceiling gains ${maxed.toFixed(2)}/yr`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 15 — you never tee off on your own')
+{
+  // The senior roster is smaller than a senior field, so everyone played every
+  // week, everyone hit their starts budget in the same week, and every senior
+  // event after it had a field of one: the player, alone, collecting the
+  // winner's cheque and the ranking points. A third of one test career's
+  // senior events went that way. Measure the thinnest field on every circuit.
+  const worst = {}
+  for (let seed = 0; seed < 2; seed++) {
+    const s = E.newGame({ name: 'Field Audit', seed: 900 + seed * 311, talent: 0.55 + seed * 0.15, age: 21 })
+    while (!s.player.retired && s.player.age < 58) {
+      E.autoOffseason(s)
+      E.startSeason(s)
+      E.simToOffseason(s)
+      for (const r of Object.values(s.seasonResults)) {
+        // `top` holds 20 rows for the player's own events, so anything shorter
+        // means the field itself was short.
+        if (!r.top?.some((t) => t.isUser)) continue
+        const cur = worst[r.circuit]
+        if (!cur || r.top.length < cur.rows) worst[r.circuit] = { rows: r.top.length, where: `${s.year} ${r.name}` }
+      }
+    }
+  }
+  const seen = Object.keys(worst)
+  check('the audit saw every circuit', seen.length >= 5, `only saw ${seen.join(', ')}`)
+  for (const [circuit, w] of Object.entries(worst).sort()) {
+    check(`${circuit}: never a near-empty field`, w.rows >= 20, `thinnest was ${w.rows} rows — ${w.where}`)
+  }
+  console.log(`   thinnest field by circuit: ${Object.entries(worst).sort().map(([c, w]) => `${c} ${w.rows}`).join(', ')}`)
+
+  // And the same guarantee when the roster is gutted underneath you, which is
+  // the state the bug actually arose from.
+  const s = E.newGame({ name: 'Last Man', seed: 14, talent: 0.7, age: 21 })
+  while (!s.player.retired && s.player.age < 52) { E.autoOffseason(s); E.startSeason(s); E.simToOffseason(s) }
+  let retiredOff = 0
+  for (const p of s.world.players) {
+    if (!p.isUser && !p.retired && p.age >= SENIOR_AGE) { p.retired = true; retiredOff += 1 }
+  }
+  E.autoOffseason(s)
+  E.startSeason(s)
+  E.simToOffseason(s)
+  let alone = 0
+  let thinnest = Infinity
+  for (const r of Object.values(s.seasonResults)) {
+    if (!r.top?.some((t) => t.isUser)) continue
+    thinnest = Math.min(thinnest, r.top.length)
+    if (r.top.length <= 1) alone += 1
+  }
+  check('gutting the senior roster still never leaves you alone', alone === 0,
+    `${alone} events with a field of one after retiring ${retiredOff} seniors`)
+  console.log(`   with ${retiredOff} seniors force-retired, thinnest field was ${thinnest === Infinity ? 'n/a' : thinnest}`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 16 — a tournament pays out its purse, no more and no less')
+{
+  // PAYOUT_PCT is one list of percentages, but cut sizes differ by circuit and
+  // ties at the cut push the paid field past its nominal size, so the places
+  // actually paid vary from event to event. Left unscaled this ran from 3.5%
+  // under the purse to 1.4% over — money quietly created or destroyed on every
+  // tournament in the world, for forty years.
+  let worst = { err: 0, where: '' }
+  const courses = Object.keys(COURSE_TYPES)
+  for (const [cid, circuit] of Object.entries(CIRCUITS)) {
+    for (let i = 0; i < 12; i++) {
+      const rng = new Rng(3000 + i)
+      const ev = {
+        id: 'x', name: 'X', courseType: courses[i % courses.length], difficulty: 1,
+        fieldSize: circuit.fieldSize, cutSize: circuit.cutSize, purse: 6_000_000,
+        circuit: cid, isMajor: cid === 'major',
+      }
+      const field = []
+      for (let j = 0; j < ev.fieldSize; j++) {
+        field.push(makeEntrant(
+          { pid: j, name: `P${j}`, playstyle: 'balanced', form: 0, fatigue: 20 },
+          emptyRatings(Math.round(rng.gaussClamped(64, 8))), ev,
+        ))
+      }
+      const res = simTournament(ev, field, new Rng(4000 + i))
+      const paid = res.results.reduce((a, r) => a + (r.money || 0), 0)
+      const err = Math.abs(paid - ev.purse) / ev.purse
+      if (err > worst.err) worst = { err, where: `${cid}: paid ${Math.round(paid).toLocaleString()} of ${ev.purse.toLocaleString()}` }
+      // Nobody who made the cut should be sent home with nothing.
+      const unpaid = res.results.filter((r) => r.madeCut && r.pos && !(r.money > 0)).length
+      check(`${cid}: everyone who made the cut is paid`, unpaid === 0, `${unpaid} finishers on zero`)
+    }
+  }
+  // Rounding to whole dollars across ~70 places is the only slack allowed.
+  check('every circuit pays out its purse exactly', worst.err < 0.0001, worst.where)
+  console.log(`   worst discrepancy across all circuits: ${(worst.err * 100).toFixed(4)}% (${worst.where})`)
+
+  const total = PAYOUT_PCT.reduce((a, b) => a + b, 0)
+  check('the payout table itself sums to 100%', Math.abs(total - 100) < 0.01, `sums to ${total.toFixed(3)}%`)
+  const maxCut = Math.max(...Object.values(CIRCUITS).map((c) => c.cutSize))
+  check('the payout table covers the largest cut', PAYOUT_PCT.length >= maxCut,
+    `${PAYOUT_PCT.length} places for a cut of ${maxCut}`)
 }
 
 // ---------------------------------------------------------------------------
