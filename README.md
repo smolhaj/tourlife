@@ -23,9 +23,18 @@ npm run preview  # serve the built site
 ## Deploying to GitHub Pages
 
 `.github/workflows/deploy.yml` builds on every push to `main` and publishes
-`/dist` via GitHub Pages. Enable it once under **Settings → Pages → Source →
-GitHub Actions**. The Vite `base` is `./`, so the same bundle works from a user
-page, a project page, or a `file://` open.
+`/dist` via GitHub Pages. It passes `enablement: true` to `configure-pages`, so
+it turns Pages on and points it at the workflow by itself — no manual setup.
+
+If your org blocks the workflow token from changing Pages settings, the action
+will fail with *"Get Pages site failed"*. In that case set **Settings → Pages →
+Source → GitHub Actions** by hand once and re-run the workflow. Watch for that
+error specifically: while Pages is set to *Deploy from a branch* the site serves
+the repository root, so visitors get the unbuilt `index.html` and a 404 on
+`/src/main.jsx` rather than the game.
+
+The Vite `base` is `./`, so the same bundle works from a user page, a project
+page, or a `file://` open.
 
 ## How the game works
 

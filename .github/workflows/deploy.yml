@@ -18,13 +18,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
       - run: npm ci
       - run: npm run build
       - uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on and point it at this workflow if it is not already.
+          # Without this the first deploy fails with "Get Pages site failed"
+          # and the repo keeps serving its source tree from a branch, which
+          # means the browser gets the unbuilt index.html.
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
