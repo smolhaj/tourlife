@@ -517,6 +517,65 @@ section('SCENARIO 10 — money adds up')
 }
 
 // ---------------------------------------------------------------------------
+section('SCENARIO 13 — closing the tab costs you nothing')
+{
+  // Two identical careers. One is played straight through; the other is saved
+  // and reloaded every offseason, which is how anyone actually plays a browser
+  // game. They must end up in exactly the same place.
+  const play = (reload) => {
+    let s = E.newGame({ name: 'Persistent', seed: 777, talent: 0.7, age: 21 })
+    while (s.player.age < 32 && !s.player.retired) {
+      if (s.phase === 'offseason') { E.autoFillSchedule(s, 26); E.startSeason(s) }
+      E.simToOffseason(s)
+      E.autoOffseason(s)
+      if (reload) s = importSave(exportSave(s))
+    }
+    return s
+  }
+  const straight = play(false)
+  const reloaded = play(true)
+  const shape = (s) => JSON.stringify({
+    ovr: Math.round(overall(s.player.ratings)),
+    rank: s.player.rank,
+    wins: s.career.wins,
+    majors: s.career.majors,
+    gross: Math.round(s.career.careerGross),
+  })
+  check('a career reloaded every year plays out identically', shape(straight) === shape(reloaded),
+    `straight ${shape(straight)} vs reloaded ${shape(reloaded)}`)
+
+  // The specific two things that broke it, asserted directly so a regression
+  // names itself instead of just moving the numbers.
+  const rt = importSave(exportSave(straight))
+  check('you are still the same object the world ranks',
+    rt.world.players.find((p) => p.pid === rt.player.pid) === rt.player,
+    'save round-trip split state.player from its world entry')
+  for (const role of ['coach', 'caddie', 'physio', 'psych', 'agent']) {
+    const before = straight.staff[role]
+    const after = rt.staff[role]
+    check(`an empty ${role} slot survives a save as empty`,
+      before !== null || after === null,
+      `null became ${JSON.stringify(after)} — a truthy slot reads as "you have a ${role}"`)
+    check(`a hired ${role} survives a save`,
+      before === null || (after && after.name === before.name),
+      `${before && before.name} became ${JSON.stringify(after)}`)
+  }
+
+  // Mid-season saves must be just as safe as offseason ones.
+  const mid = E.newGame({ name: 'Midseason', seed: 606, talent: 0.68, age: 22 })
+  E.autoFillSchedule(mid, 26)
+  E.startSeason(mid)
+  for (let i = 0; i < 9; i++) E.simWeek(mid)
+  const direct = cloneState(mid)
+  const viaSave = importSave(exportSave(mid))
+  for (let i = 0; i < 8; i++) { E.simWeek(direct); E.simWeek(viaSave) }
+  const mshape = (s) => JSON.stringify({ w: s.week, r: s.player.rank, st: s.seasonTotals.starts, g: Math.round(s.seasonTotals.prizeGross) })
+  check('a mid-season save resumes deterministically', mshape(direct) === mshape(viaSave),
+    `${mshape(direct)} vs ${mshape(viaSave)}`)
+  invariants(reloaded, 'reloaded career')
+}
+
+// ---------------------------------------------------------------------------
 console.log(`\n${'='.repeat(60)}`)
 console.log(`${pass} passed, ${fail} failed`)
 if (fail) {

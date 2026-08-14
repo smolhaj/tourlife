@@ -94,7 +94,6 @@ export default function App() {
       if (!state) return
       const apply = () => {
         const draft = cloneState(state)
-        if (snapshot) historyRef.current.push(state, label)
         let out
         try {
           out = fn(draft)
@@ -104,6 +103,10 @@ export default function App() {
           setBusy(null)
           return
         }
+        // Snapshot only once the mutation has succeeded: an action that threw
+        // leaves the old state live, and recording it would have added an undo
+        // step that rewinds to exactly where you already are.
+        if (snapshot) historyRef.current.push(state, label)
         E.refreshDerived(draft)
         setState(draft)
         setBusy(null)

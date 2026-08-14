@@ -1,11 +1,19 @@
 name: CI
 
-# Manual only. The same suites run locally in ~45s via the pre-push hook
-# (`git config core.hooksPath scripts/hooks`), so this costs nothing unless you
-# deliberately trigger it from the Actions tab — useful for checking a branch
-# you did not build locally, or a contributor's pull request.
+# This repository is public, so GitHub-hosted runner minutes are not metered —
+# the API reports 0 billable ms per run. Nothing here draws down a quota.
+# The same suites also run locally in ~45s via the pre-push hook
+# (`git config core.hooksPath scripts/hooks`); CI is the clean-checkout check.
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+# A new push supersedes the run already in flight for the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
