@@ -146,6 +146,19 @@ src/components/   the UI
 scripts/balance.mjs  headless career harness — `npm run balance`
 ```
 
+### Tests
+
+`npm test` runs `scripts/scenarios.mjs`: ten scenarios that play whole careers
+through the engine and assert what should always be true — the ladder from
+amateur to the majors actually connects, a weak player is never stranded with
+nowhere to enter, injuries clear and leave a mark, the same seed reproduces the
+same career, a save survives an export/import round trip, retiring and
+un-retiring both work, godmode does what it claims, and the money adds up. It
+takes about nine seconds and has no dependencies.
+
+It is worth writing new scenarios rather than unit tests here: every bug it has
+caught was an emergent one, invisible in any single function.
+
 ### The balance harness
 
 `npm run balance` runs whole careers with no browser and prints the shape of

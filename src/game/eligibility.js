@@ -159,6 +159,20 @@ export function resolveCards(state, rng) {
     notes.push('A strong Emerging Circuit season earned you International Tour status.')
   }
 
+  // Promotion up the ladder. Without these you could win repeatedly on the
+  // International or Asian circuits and still have no way onto the tour above,
+  // because retention there is measured in starts you were never allowed.
+  const intlMoney = moneyByCircuit.intl || 0
+  if (intlMoney >= 1200000 * infl && cardStatus(state, 'domestic') !== 'full') {
+    grantCard(state, 'domestic', 'full', 2)
+    notes.push('You finished high enough on the International Tour money list to earn a Domestic Tour card.')
+  }
+  const asianMoney = moneyByCircuit.asian || 0
+  if (asianMoney >= 450000 * infl && cardStatus(state, 'intl') !== 'full') {
+    grantCard(state, 'intl', 'full', 2)
+    notes.push('Topping the Asian Circuit order of merit has earned you International Tour status.')
+  }
+
   // Any win on a tour buys you two years there.
   for (const w of state.career.winsList || []) {
     if (w.year === year && w.circuit !== 'amateur' && w.circuit !== 'major') {

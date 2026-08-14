@@ -15,6 +15,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # The balance harness is dependency-free and runs whole careers headless,
-      # so it doubles as a smoke test for the simulation.
+      # Scenario tests play whole careers through the engine and assert the
+      # invariants that should always hold. ~9s, no dependencies.
+      - run: npm run scenarios
+      # The balance harness checks the numbers still land where we want them.
       - run: npm run balance -- --careers 3 --until 40

@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "balance": "node scripts/balance.mjs"
+    "balance": "node scripts/balance.mjs",
+    "scenarios": "node scripts/scenarios.mjs",
+    "test": "node scripts/scenarios.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

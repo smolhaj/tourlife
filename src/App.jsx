@@ -458,7 +458,9 @@ export default function App() {
                 ⋯
               </button>
             </div>
-            <div className={`sim-aux ${showMore ? 'open' : ''}`}>
+            {/* Picking something from the overflow menu closes it — leaving it
+                open covers content on a phone and makes the next tap a toggle. */}
+            <div className={`sim-aux ${showMore ? 'open' : ''}`} onClick={() => setShowMore(false)}>
               <NextUp state={state} />
               <div className="spacer" />
               <button className="btn sm ghost" onClick={actions.undo} disabled={!historyRef.current.canUndo()}>
