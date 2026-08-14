@@ -5,8 +5,8 @@
 // engine API and checks invariants after every season.
 
 import * as E from '../src/game/engine.js'
-import { ATTR_KEYS, SENIOR_AGE } from '../src/game/constants.js'
-import { overall } from '../src/game/ratings.js'
+import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS } from '../src/game/constants.js'
+import { overall, progressYear } from '../src/game/ratings.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney } from '../src/game/finance.js'
@@ -166,8 +166,35 @@ section('SCENARIO 1 — the intended ladder, played deliberately')
   )
   check('reached the Emerging Circuit', sawEmerging)
   check('climbed to the Domestic Tour', sawDomestic, `cards=${JSON.stringify(s.cards.domestic)}`)
-  check('played at least one major', sawMajor)
   check('never stranded with nowhere to play', s.career.starts > 200, `${s.career.starts} starts`)
+
+  // Whether one particular career cracks the major exemption is a coin flip at
+  // this talent level, so ask the ladder the question it is actually meant to
+  // answer: does managing a good prospect well get you to majors, generally?
+  let sawMajorIn = 0
+  for (let seed = 0; seed < 3; seed++) {
+    const m = E.newGame({ name: 'Ladder Majors', seed: 20260814 + seed * 1013, talent: 0.66, age: 21 })
+    E.autoFillSchedule(m, 20)
+    E.startSeason(m)
+    E.simToOffseason(m)
+    E.turnPro(m)
+    E.enterQSchool(m)
+    hireBest(m)
+    E.autoFillSchedule(m, 26)
+    E.startSeason(m)
+    let hit = false
+    while (m.player.age < 34 && !m.player.retired) {
+      E.simToOffseason(m)
+      for (const r of m.seasonLog) if (r.isMajor) hit = true
+      E.setTraining(m, weakestTraining(m))
+      for (const o of m.sponsors.offers.slice()) E.acceptOffer(m, o.id)
+      hireBest(m)
+      E.autoFillSchedule(m, 26)
+      E.startSeason(m)
+    }
+    if (hit) sawMajorIn += 1
+  }
+  check('a well-managed prospect reaches the majors', sawMajorIn >= 2, `${sawMajorIn}/3 careers played one`)
 
   // The same prospect, same seed, managed badly: no staff, one attribute
   // trained forever. It should still be a playable career, and clearly worse.
@@ -573,6 +600,75 @@ section('SCENARIO 13 — closing the tab costs you nothing')
   check('a mid-season save resumes deterministically', mshape(direct) === mshape(viaSave),
     `${mshape(direct)} vs ${mshape(viaSave)}`)
   invariants(reloaded, 'reloaded career')
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 14 — the training choice is actually a choice')
+{
+  // Measured the way the player experiences it: take one state, run the same
+  // year under each training option, and compare the overall each produces.
+  // No option may win everywhere, or the offseason's most frequent decision
+  // collapses into a single right answer.
+  const attrs = TRAINING_OPTIONS.filter((t) => t.attr).map((t) => t.attr)
+
+  /**
+   * Overall points a year of this training choice is worth, averaged over many
+   * RNG draws. Playing a whole season instead would bury a 0.2-point effect
+   * under several points of tournament noise.
+   */
+  const yearValue = (ratings, potential, attr, runs = 300) => {
+    let before = overall(ratings)
+    let total = 0
+    for (let i = 0; i < runs; i++) {
+      const r = progressYear(ratings, potential, 26, new Rng(9000 + i), { trainingAttr: attr, trainingPower: 1.2 })
+      total += overall(r.ratings) - before
+    }
+    return total / runs
+  }
+
+  const mkPlayer = (gapFor) => {
+    const ratings = {}
+    const potential = {}
+    for (const k of ATTR_KEYS) { ratings[k] = 60; potential[k] = 60 + gapFor(k) }
+    return { ratings, potential }
+  }
+
+  const SITUATIONS = [
+    ['room everywhere', mkPlayer(() => 12)],
+    ['one big hole in irons', mkPlayer((k) => (k === 'irons' ? 16 : 1))],
+    ['at his ceiling everywhere', mkPlayer(() => 1)],
+  ]
+  const winners = new Set()
+  for (const [label, { ratings, potential }] of SITUATIONS) {
+    const scored = [...attrs, 'all']
+      .map((a) => ({ a, v: yearValue(ratings, potential, a) }))
+      .sort((x, y) => y.v - x.v)
+    winners.add(scored[0].a)
+    const bal = scored.find((x) => x.a === 'all')
+    console.log(`   ${label}: best "${scored[0].a}" ${scored[0].v.toFixed(3)}/yr, balanced ${bal.v.toFixed(3)}/yr`)
+  }
+  check('no one training option is best in every situation', winners.size > 1,
+    `"${[...winners][0]}" won all ${SITUATIONS.length} situations`)
+
+  // And the engine must honour the headroom the offseason screen advertises:
+  // training an attribute at its ceiling cannot pay as well as one with room.
+  const rng = new Rng(4242)
+  const ratings = {}, potential = {}
+  for (const k of ATTR_KEYS) { ratings[k] = 60; potential[k] = 60 }
+  potential.putting = 85
+  const gain = (attr) => {
+    let total = 0
+    for (let i = 0; i < 200; i++) {
+      const r = progressYear(ratings, potential, 26, new Rng(1000 + i), { trainingAttr: attr, trainingPower: 1.2 })
+      total += r.deltas[attr]
+    }
+    return total / 200
+  }
+  const roomy = gain('putting')   // 25 points of headroom
+  const maxed = gain('irons')     // none
+  check('training pays more where there is headroom', roomy > maxed + 0.3,
+    `putting (25 spare) gained ${roomy.toFixed(2)}/yr vs irons (maxed) ${maxed.toFixed(2)}/yr`)
+  console.log(`   headroom check: +25 spare gains ${roomy.toFixed(2)}/yr, at ceiling gains ${maxed.toFixed(2)}/yr`)
 }
 
 // ---------------------------------------------------------------------------

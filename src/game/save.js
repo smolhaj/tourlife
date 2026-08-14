@@ -5,9 +5,48 @@ export function cloneState(state) {
   return JSON.parse(JSON.stringify(state))
 }
 
+/**
+ * Optimistic concurrency for the autosave.
+ *
+ * Two tabs open on the same career used to take turns overwriting each other
+ * with whatever state each happened to be holding: sim a year in one tab, click
+ * anything in the other, and the year was gone with nothing said. Each tab
+ * tracks the sequence number it believes is current and refuses to write over a
+ * newer one.
+ */
+const OWNER_KEY = `${SAVE_KEY}:owner`
+const TAB_ID = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+let ownedSeq = 0
+
+function readOwner() {
+  try {
+    const raw = localStorage.getItem(OWNER_KEY)
+    const o = raw ? JSON.parse(raw) : null
+    return o && typeof o.seq === 'number' ? o : null
+  } catch {
+    return null
+  }
+}
+
+/** Take ownership of whatever is on disk — after a load, import or new career. */
+export function claimSave() {
+  const cur = readOwner()
+  ownedSeq = cur ? cur.seq : 0
+}
+
 export function saveGame(state) {
   try {
+    const cur = readOwner()
+    if (cur && cur.seq !== ownedSeq) {
+      return {
+        ok: false,
+        conflict: true,
+        error: 'This career is open in another tab, which has moved further on.',
+      }
+    }
     localStorage.setItem(SAVE_KEY, JSON.stringify(state))
+    ownedSeq += 1
+    localStorage.setItem(OWNER_KEY, JSON.stringify({ tab: TAB_ID, seq: ownedSeq }))
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) }
@@ -43,6 +82,7 @@ export function loadGame() {
     if (!parsed || typeof parsed !== 'object') return null
     const state = parsed.format === 'tourlife-career' ? parsed.state : parsed
     if (!isPlayableSave(state)) return null
+    claimSave()
     return migrate(state)
   } catch {
     return null
@@ -52,6 +92,8 @@ export function loadGame() {
 export function clearSave() {
   try {
     localStorage.removeItem(SAVE_KEY)
+    localStorage.removeItem(OWNER_KEY)
+    ownedSeq = 0
   } catch {
     /* private browsing */
   }
@@ -204,6 +246,8 @@ export function importSave(text) {
   const parsed = JSON.parse(text)
   const state = parsed && parsed.format === 'tourlife-career' ? parsed.state : parsed
   if (!isPlayableSave(state)) throw new Error('That does not look like a Tour Life career file.')
+  // An imported file replaces whatever was here, so this tab owns it now.
+  claimSave()
   return migrate(state)
 }
 

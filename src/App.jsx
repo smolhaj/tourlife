@@ -14,6 +14,7 @@ import {
   downloadSave,
   exportSave,
   importSave,
+  claimSave,
   History,
 } from './game/save.js'
 
@@ -69,7 +70,9 @@ export default function App() {
           {
             id: ++toastId.current,
             kind: 'bad',
-            text: 'Could not save to this browser. Export your career from Share to keep it.',
+            text: res.conflict
+              ? 'This career is open in another tab and has moved on there. Nothing here is being saved — reload to catch up.'
+              : 'Could not save to this browser. Export your career from Share to keep it.',
           },
         ])
       } else if (res.ok) {
@@ -127,6 +130,9 @@ export default function App() {
 
   function startNew(opts) {
     historyRef.current.clear()
+    // Starting over deliberately takes the save away from any other tab.
+    claimSave()
+    saveWarned.current = false
     const s = E.newGame(opts)
     setState(s)
     setTab('home')
@@ -153,6 +159,7 @@ export default function App() {
   function doImport(text) {
     const s = importSave(text)
     historyRef.current.clear()
+    saveWarned.current = false
     setState(E.refreshDerived(s))
     setTab('home')
     toast('Career imported.', 'good')

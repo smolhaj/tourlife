@@ -238,6 +238,58 @@ section('State the UI depends on')
   check('state is structured-cloneable', clone.career.starts === s.career.starts)
 }
 
+// ---------------------------------------------------------------------------
+section('Two tabs open on the same career')
+{
+  // Two independent module instances sharing one localStorage stand in for two
+  // browser tabs. Without the ownership check, whichever tab acted last wrote
+  // its own stale state over the other's progress and said nothing about it.
+  const store = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  }
+  const tabA = await import('../src/game/save.js?tab=a')
+  const tabB = await import('../src/game/save.js?tab=b')
+
+  tabA.claimSave()
+  const a = E.newGame({ name: 'Racer', seed: 5, talent: 0.6, age: 21 })
+  check('first tab can save', tabA.saveGame(a).ok)
+
+  const b = tabB.loadGame()
+  check('second tab can open the same career', !!b)
+
+  E.autoFillSchedule(a, 25)
+  E.startSeason(a)
+  E.simToOffseason(a)
+  E.autoOffseason(a)
+  check('first tab saves its progress', tabA.saveGame(a).ok)
+
+  const refused = tabB.saveGame(b)
+  check('the stale tab is refused rather than clobbering', refused.ok === false && refused.conflict === true,
+    JSON.stringify(refused))
+
+  const onDisk = tabA.loadGame()
+  check('the played season survives on disk', onDisk.career.starts === a.career.starts,
+    `disk ${onDisk.career.starts} starts vs played ${a.career.starts}`)
+
+  const b2 = tabB.loadGame()
+  check('reloading the stale tab catches it up', b2.career.starts === a.career.starts)
+  check('and it can save again afterwards', tabB.saveGame(b2).ok)
+
+  tabA.claimSave()
+  const fresh = E.newGame({ name: 'Second', seed: 9, talent: 0.6, age: 21 })
+  check('starting a new career reclaims the save', tabA.saveGame(fresh).ok)
+
+  // The check must be invisible to anyone playing in a single tab.
+  tabA.claimSave()
+  let refusals = 0
+  for (let i = 0; i < 50; i++) if (!tabA.saveGame(fresh).ok) refusals++
+  check('50 consecutive single-tab saves all succeed', refusals === 0, `${refusals} refused`)
+  delete globalThis.localStorage
+}
+
 console.log(`\n${'='.repeat(56)}`)
 console.log(`${pass} passed, ${fail} failed`)
 if (fails.length) { console.log('\nFAILURES:'); fails.forEach((f) => console.log('  ✗ ' + f)) }
