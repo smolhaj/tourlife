@@ -168,11 +168,13 @@ section('SCENARIO 1 — the intended ladder, played deliberately')
   check('climbed to the Domestic Tour', sawDomestic, `cards=${JSON.stringify(s.cards.domestic)}`)
   check('never stranded with nowhere to play', s.career.starts > 200, `${s.career.starts} starts`)
 
-  // Whether one particular career cracks the major exemption is a coin flip at
-  // this talent level, so ask the ladder the question it is actually meant to
-  // answer: does managing a good prospect well get you to majors, generally?
+  // Whether one particular career cracks the major exemption is close to a coin
+  // flip at this talent level, so ask the ladder the question it is actually
+  // meant to answer: does managing a good prospect well get you to the majors,
+  // generally? A single seed made this assertion pass or fail on luck.
   let sawMajorIn = 0
-  for (let seed = 0; seed < 3; seed++) {
+  const MAJOR_SEEDS = 8
+  for (let seed = 0; seed < MAJOR_SEEDS; seed++) {
     const m = E.newGame({ name: 'Ladder Majors', seed: 20260814 + seed * 1013, talent: 0.66, age: 21 })
     E.autoFillSchedule(m, 20)
     E.startSeason(m)
@@ -194,7 +196,10 @@ section('SCENARIO 1 — the intended ladder, played deliberately')
     }
     if (hit) sawMajorIn += 1
   }
-  check('a well-managed prospect reaches the majors', sawMajorIn >= 2, `${sawMajorIn}/3 careers played one`)
+  // Measured rate is 10 in 12, so 5 of 8 leaves plenty of headroom for noise
+  // while still collapsing if the ladder itself breaks.
+  check('a well-managed prospect reaches the majors', sawMajorIn >= 5,
+    `only ${sawMajorIn}/${MAJOR_SEEDS} careers played one`)
 
   // The same prospect, same seed, managed badly: no staff, one attribute
   // trained forever. It should still be a playable career, and clearly worse.
