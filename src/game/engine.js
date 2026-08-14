@@ -65,6 +65,8 @@ import {
   offWeekLine,
   careerPhase,
   legacyScore,
+  withArticle,
+  plural,
   LIFE_EVENTS,
 } from './narrative.js'
 import {
@@ -269,12 +271,39 @@ export function upcomingYear(state) {
   return state.year + (state.offseason?.isFirst ? 0 : 1)
 }
 
+/**
+ * Travel for a *whole* season, taken from the schedule the player committed
+ * to rather than the starts they happen to have made so far. Costing a
+ * projection off two weeks of results made the annual burn — and with it the
+ * financial-independence targets and the retirement calculation — creep
+ * upward all year for no reason the player could see.
+ */
+export function projectedStartsByCircuit(state) {
+  const planned = {}
+  if (state.phase === 'season') {
+    for (const ev of state.season) {
+      if (state.entered[ev.id]) planned[ev.circuit] = (planned[ev.circuit] || 0) + 1
+    }
+  } else {
+    for (const ev of state.nextSeason || []) {
+      if (state.nextEntered?.[ev.id]) planned[ev.circuit] = (planned[ev.circuit] || 0) + 1
+    }
+  }
+  // Fall back to what actually happened when nothing is scheduled yet.
+  if (!Object.keys(planned).length) {
+    const actual = state.seasonTotals.startsByCircuit || {}
+    if (Object.keys(actual).length) return actual
+    const last = state.career.seasons[state.career.seasons.length - 1]
+    if (last && last.starts) return { domestic: last.starts }
+  }
+  return planned
+}
+
 export function currentBurn(state) {
-  const startsByCircuit = state.seasonTotals.startsByCircuit
   return annualExpenses({
     lifestyleId: state.finance.lifestyle,
     staffCost: annualStaffCost(state.staff),
-    startsByCircuit,
+    startsByCircuit: projectedStartsByCircuit(state),
     yearsElapsed: state.yearsElapsed,
     dependents: state.finance.dependents,
     amateur: state.player.status === 'amateur',
@@ -653,7 +682,7 @@ function handleUserWin(state, event, outcome, row, rng) {
     if (!c.firstAmateurWinYear) {
       c.firstAmateurWinYear = state.year
       addHighlight(state, 'amWin', {
-        title: `Won ${eventTitle(event.name)}`,
+        title: `Won ${withArticle(event.name)}`,
         text: 'An amateur title, no cheque, and the first time it occurred to you that this might actually work.',
         importance: 2,
         eventName: event.name,
@@ -681,7 +710,7 @@ function handleUserWin(state, event, outcome, row, rng) {
         c.majors === 1
           ? `${winLine(rng, event, margin)} You are a major champion, and that sentence is now permanent.`
           : droughtYears && droughtYears >= 5
-            ? `After ${droughtYears} years without one, you got back to the top of a major. ${winLine(rng, event, margin)}`
+            ? `After ${plural(droughtYears, 'year')} without one, you got back to the top of a major. ${winLine(rng, event, margin)}`
             : winLine(rng, event, margin),
       importance: 6,
       eventName: event.name,
@@ -695,7 +724,7 @@ function handleUserWin(state, event, outcome, row, rng) {
     })
   } else if (event.flagship) {
     addHighlight(state, 'bigWin', {
-      title: `Won ${eventTitle(event.name)}`,
+      title: `Won ${withArticle(event.name)}`,
       text: winLine(rng, event, margin),
       importance: 3,
       eventName: event.name,
@@ -708,11 +737,6 @@ function handleUserWin(state, event, outcome, row, rng) {
       eventName: event.name,
     })
   }
-}
-
-/** Event names often start with "The"; do not print it twice. */
-function eventTitle(name) {
-  return /^the\s/i.test(name) ? name : `the ${name}`
 }
 
 function ordinal(n) {
@@ -806,13 +830,13 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
         week: state.week,
         year: state.year,
         kind: 'recovery',
-        text: `Cleared to play again after ${p.injury.weeksTotal} weeks out (${p.injury.name}).`,
+        text: `Cleared to play again after ${plural(p.injury.weeksTotal, 'week')} out (${p.injury.name}).`,
         detail: lostBits.length ? 'You are not quite the same player who went down.' : 'No lasting damage.',
       })
       if (p.injury.weeksTotal >= 12) {
         addHighlight(state, 'comeback', {
           title: `Back from ${p.injury.name.toLowerCase()}`,
-          text: `${p.injury.weeksTotal} weeks away. Now you find out what is left.`,
+          text: `${plural(p.injury.weeksTotal, 'week')} away. Now you find out what is left.`,
           importance: 3,
         })
       }
@@ -830,10 +854,10 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
         week: state.week,
         year: state.year,
         kind: setback.out ? 'injury' : 'slump',
-        text: `${setback.name} — ${setback.weeksTotal} weeks.`,
+        text: `${setback.name} — ${plural(setback.weeksTotal, 'week')}.`,
         detail: setback.text,
       })
-      pushNews(state, `${setback.name}: out for roughly ${setback.weeksTotal} weeks.`, 'bad')
+      pushNews(state, `${setback.name}: out for roughly ${plural(setback.weeksTotal, 'week')}.`, 'bad')
       if (setback.weeksTotal >= 12) {
         addHighlight(state, 'injury', {
           title: setback.name,
@@ -909,7 +933,7 @@ export function advanceOneWeek(state, rng) {
       week,
       year: state.year,
       kind: 'wd',
-      text: `Withdrew from the ${userEvent.name} — ${p.injury.name}.`,
+      text: `Withdrew from ${withArticle(userEvent.name)} — ${p.injury.name}.`,
     })
     userEvent = null
   }
@@ -937,7 +961,7 @@ export function advanceOneWeek(state, rng) {
     state.seasonResults[event.id] = summary
     if (isUserEvent) userResult = recordUserResult(state, event, outcome, rng, byPid)
     else if (event.isMajor) {
-      pushNews(state, `${outcome.winner.name} wins the ${event.name} at ${fmtToPar(outcome.winner.toPar)}.`, 'major')
+      pushNews(state, `${outcome.winner.name} wins ${withArticle(event.name)} at ${fmtToPar(outcome.winner.toPar)}.`, 'major')
     }
   }
 
@@ -949,7 +973,7 @@ export function advanceOneWeek(state, rng) {
         week,
         year: state.year,
         kind: 'rehab',
-        text: `Rehab — ${p.injury.name} (${p.injury.weeksLeft} weeks to go).`,
+        text: `Rehab — ${p.injury.name} (${plural(p.injury.weeksLeft, 'week')} to go).`,
       })
     }
   }
@@ -1507,7 +1531,7 @@ export function acceptOffer(state, offerId) {
     state.finance.cash += net
     state.career.endorsementTotal += net
   }
-  pushNews(state, `Signed with ${offer.brand} — ${fmtMoney(offer.annual, { compact: true })}/yr for ${offer.years} years.`, 'money')
+  pushNews(state, `Signed with ${offer.brand} — ${fmtMoney(offer.annual, { compact: true })}/yr for ${plural(offer.years, 'year')}.`, 'money')
   if (!state.career.firstSponsorYear) {
     state.career.firstSponsorYear = state.year
     addHighlight(state, 'sponsor', {
@@ -1718,9 +1742,9 @@ export function attemptQualifier(state, eventId) {
       if (other && other.week === ev.week) delete target[id]
     }
     target[ev.id] = true
-    pushNews(state, `Qualified for the ${ev.name}.`, 'good')
+    pushNews(state, `Qualified for ${withArticle(ev.name)}.`, 'good')
   } else {
-    pushNews(state, `Missed out in qualifying for the ${ev.name}.`, 'bad')
+    pushNews(state, `Missed out in qualifying for ${withArticle(ev.name)}.`, 'bad')
   }
   state.rngState = rng.s
   return { ok: success, chance }
@@ -1738,7 +1762,7 @@ export function retirementPressure(state) {
 
   if (p.age >= 40) {
     pressure += (p.age - 39) * 5
-    reasons.push({ label: 'Age', detail: `${p.age} years old`, weight: (p.age - 39) * 5 })
+    reasons.push({ label: 'Age', detail: `${plural(p.age, 'year')} old`, weight: (p.age - 39) * 5 })
   }
   if (ovrDrop > 6) {
     pressure += ovrDrop * 1.8
@@ -1791,7 +1815,7 @@ export function retire(state, reason = 'chose to') {
   state.career.legacy = legacyScore(state.career, p)
   addHighlight(state, 'retire', {
     title: `Retired at ${p.age}`,
-    text: `${state.career.wins} wins, ${state.career.majors} majors, ${state.career.starts} starts. You ${reason}.`,
+    text: `${plural(state.career.wins, 'win')}, ${plural(state.career.majors, 'major')}, ${plural(state.career.starts, 'start')}. You ${reason}.`,
     importance: 6,
   })
   pushNews(state, `${p.name} announces retirement at ${p.age}.`, 'major')

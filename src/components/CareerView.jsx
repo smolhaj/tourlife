@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { fmtMoney } from '../game/finance.js'
-import { legacyScore, legacyLabel, majorNarrative } from '../game/narrative.js'
+import { legacyScore, legacyLabel, majorNarrative, plural } from '../game/narrative.js'
 import { Card, Stat, StatGrid, Chip, CircuitChip, Money, Empty, Sparkline } from './ui.jsx'
 
 export default function CareerView({ state }) {
@@ -53,9 +53,9 @@ export default function CareerView({ state }) {
               {legacyLabel(legacy).label}
             </div>
             <div className="small muted">
-              {c.weeksAtNo1 ? `${c.weeksAtNo1} weeks at world number one. ` : ''}
+              {c.weeksAtNo1 ? `${plural(c.weeksAtNo1, 'week')} at world number one. ` : ''}
               {c.bestRank ? `Best ranking #${c.bestRank}. ` : ''}
-              {c.seasonsTop10 ? `${c.seasonsTop10} seasons finishing top 10 in the world.` : ''}
+              {c.seasonsTop10 ? `${plural(c.seasonsTop10, 'season')} finishing top 10 in the world.` : ''}
             </div>
           </div>
           <div className="pill-row">

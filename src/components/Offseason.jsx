@@ -12,6 +12,7 @@ import { fmtMoney } from '../game/finance.js'
 import { techBaseline } from '../game/equipment.js'
 import { coachTrainingBonus } from '../game/staff.js'
 import { marketability } from '../game/sponsors.js'
+import { plural } from '../game/narrative.js'
 import { Card, Option, Chip, Money, Empty, StatGrid, Stat, CircuitChip } from './ui.jsx'
 import ScheduleBuilder from './ScheduleBuilder.jsx'
 
@@ -390,7 +391,7 @@ function Training({ state, actions }) {
               note={state.staff.coach ? state.staff.coach.traitLabel : 'Without a coach, most of your training is wasted.'}
             />
             <Row k="Morale" v={`${Math.round(p.morale)}%`} note={p.morale < 40 ? 'Low morale blunts the work.' : 'Engaged and putting the hours in.'} />
-            <Row k="Career mileage" v={`${p.starts} starts`} note={p.starts > 400 ? 'The miles are starting to tell.' : 'Body still fresh enough.'} />
+            <Row k="Career mileage" v={plural(p.starts, 'start')} note={p.starts > 400 ? 'The miles are starting to tell.' : 'Body still fresh enough.'} />
           </div>
         </Card>
         <Card title="Headroom">

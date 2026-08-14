@@ -4,6 +4,7 @@ import { checkEligibility, CARD_LABELS, cardStatus } from '../game/eligibility.j
 import { upcomingYear } from '../game/engine.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
 import { fmtMoney } from '../game/finance.js'
+import { plural } from '../game/narrative.js'
 import { Card, CircuitChip, Chip } from './ui.jsx'
 
 /**
@@ -51,7 +52,7 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
     <div className="col">
       <Card
         title={forNext ? `${targetYear} schedule` : 'Remaining schedule'}
-        aux={`${enteredCount} starts · ${majorsIn}/4 majors · ${fmtMoney(totalPurse, { compact: true })} in purses`}
+        aux={`${plural(enteredCount, 'start')} · ${majorsIn}/4 majors · ${fmtMoney(totalPurse, { compact: true })} in purses`}
       >
         <div className="row wrap between center" style={{ marginBottom: 10 }}>
           <div className="btn-group">

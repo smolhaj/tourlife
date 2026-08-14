@@ -3,7 +3,7 @@ import * as E from './game/engine.js'
 import { god } from './game/engine.js'
 import { PLAYING_WEEKS } from './game/schedule.js'
 import { fmtMoney } from './game/finance.js'
-import { careerPhase, shareText } from './game/narrative.js'
+import { careerPhase, shareText, withArticle } from './game/narrative.js'
 import { CIRCUITS } from './game/constants.js'
 import {
   cloneState,
@@ -163,9 +163,9 @@ export default function App() {
       const last = res?.events?.[res.events.length - 1]
       if (draft.phase === 'offseason') return { toast: `${draft.year} season complete.`, toastKind: 'good' }
       if (last) {
-        if (last.pos === 1) return { toast: `You won the ${last.name}!`, toastKind: 'good' }
-        if (!last.madeCut) return { toast: `Missed the cut at the ${last.shortName}.`, toastKind: 'bad' }
-        return { toast: `${last.tied ? 'T' : ''}${last.pos} at the ${last.shortName}.` }
+        if (last.pos === 1) return { toast: `You won ${withArticle(last.name)}!`, toastKind: 'good' }
+        if (!last.madeCut) return { toast: `Missed the cut at ${withArticle(last.shortName)}.`, toastKind: 'bad' }
+        return { toast: `${last.tied ? 'T' : ''}${last.pos} at ${withArticle(last.shortName)}.` }
       }
       return null
     },

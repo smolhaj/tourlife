@@ -3,6 +3,7 @@ import { worldRankingList } from '../game/world.js'
 import { rivalTable, allTimeBoard, tourAverages } from '../game/engine.js'
 import { overall } from '../game/ratings.js'
 import { fmtMoney } from '../game/finance.js'
+import { plural } from '../game/narrative.js'
 import { Card, Chip, Money, Empty, ToPar, CircuitChip } from './ui.jsx'
 
 export default function WorldView({ state }) {
@@ -165,7 +166,7 @@ function Rivals({ state }) {
                 </div>
                 <div className="xs muted">
                   You come out ahead {Math.round((h.beat / total) * 100)}% of the time · they have {h.wins} wins
-                  {h.majors ? `, ${h.majors} majors` : ''}
+                  {h.majors ? `, ${plural(h.majors, 'major')}` : ''}
                 </div>
               </div>
             )
@@ -275,7 +276,7 @@ function SeasonResults({ state }) {
       </Card>
     )
   return (
-    <Card title={`${state.year} results across every circuit`} aux={`${rows.length} events completed`}>
+    <Card title={`${state.year} results across every circuit`} aux={`${plural(rows.length, 'event')} completed`}>
       <div className="scroll-y max-h-420 tbl-wrap">
         <table className="tbl">
           <thead>
