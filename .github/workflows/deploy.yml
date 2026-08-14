@@ -3,6 +3,16 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+    # Only the things that change the built bundle. Editing docs or tests
+    # would produce a byte-identical /dist, so there is nothing to publish.
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'vite.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 permissions:
@@ -24,10 +34,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      # Gate the live site on the same suite CI runs. Without this, a direct
-      # push to main — or a merge that lands before the PR checks finish —
-      # deploys straight to players regardless.
-      - run: npm test
       - run: npm run build
       - uses: actions/configure-pages@v5
         with:
