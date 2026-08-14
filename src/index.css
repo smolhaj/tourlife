@@ -363,6 +363,15 @@ table.tbl tr.dim td { color: var(--muted-2); }
 .r-ok    { background: linear-gradient(90deg, #c07c3c, #dd9a52); }
 .r-poor  { background: linear-gradient(90deg, #9c4a3f, #c06153); }
 
+/* Text-coloured counterparts to the meter fills above, for the places a rating
+   appears as a number inside a sentence rather than as a bar. Brightened for
+   legibility against the panel rather than reusing the gradient stops. */
+.rt-elite { color: #9fe0bd; }
+.rt-great { color: #7fcaa8; }
+.rt-good  { color: #e6cb52; }
+.rt-ok    { color: #e2a463; }
+.rt-poor  { color: #d1796b; }
+
 .delta-up { color: var(--green); }
 .delta-down { color: var(--red); }
 

@@ -191,6 +191,11 @@ export function ratingColor(v) {
   return 'r-poor'
 }
 
+/** Same bands as ratingColor, for a rating written as a number in prose. */
+export function ratingTextColor(v) {
+  return ratingColor(v).replace('r-', 'rt-')
+}
+
 export function overallLabel(ovr) {
   if (ovr >= 84) return 'Generational'
   if (ovr >= 77) return 'Superstar'

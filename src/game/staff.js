@@ -155,3 +155,45 @@ export function describeStaff(s) {
   if (!s) return 'Nobody'
   return `${s.name} — ${s.tierLabel}, ${s.traitLabel}`
 }
+
+/** Staff quality is stored 0..1; everything the player sees is out of 100. */
+export function qualityOf(s) {
+  return s ? Math.round((s.q || 0) * 100) : 0
+}
+
+/**
+ * What this person's quality actually buys, in the terms the rest of the game
+ * is measured in. The numbers are read straight off the effect functions above
+ * so the explanation cannot drift away from the simulation.
+ */
+export function qualityEffect(role, q) {
+  const pct = Math.round(q * 100)
+  switch (role) {
+    case 'coach':
+      // coachTrainingBonus: q * 0.85, plus 0.55 in their specialty.
+      return `Adds about ${(q * 0.85).toFixed(2)} rating points a year to whatever you train, and ${(q * 0.85 + 0.55).toFixed(2)} in their specialty. Also keeps you improving past the age you would otherwise stop.`
+    case 'caddie':
+      // staffMatchdayEffect: q * 0.8 quality, sigma -= q * 0.07.
+      return `Worth about ${(q * 0.8).toFixed(2)} shots of playing quality every week, and cuts your scoring variance by ${Math.round(q * 7)}% — fewer blow-up rounds.`
+    case 'physio':
+      // progressYear: physio shields decline by up to 42%.
+      return `Holds off age-related decline by up to ${Math.round(q * 42)}% a year, and lowers your injury risk.`
+    case 'psych':
+      // progressYear mental/consistency, plus matchday quality * 0.5 (1.8x in majors).
+      return `Adds about ${(q * 1.1).toFixed(2)} a year to your mental rating, and ${(q * 0.5).toFixed(2)} shots of quality on tournament day — ${(q * 0.9).toFixed(2)} in a major, where nerve counts most.`
+    case 'agent':
+      // sponsors.js: slots scale with agent.q; cut and sponsorMult are separate.
+      return `Quality ${pct} widens the field of sponsors willing to talk to you. What they pay and what they take is the cut and multiplier shown beside it.`
+    default:
+      return ''
+  }
+}
+
+/** Plain-language band for a 0..100 quality, matching the tier ladder. */
+export function qualityBand(pct) {
+  if (pct >= 90) return 'the best in the game'
+  if (pct >= 72) return 'genuinely elite'
+  if (pct >= 52) return 'well regarded'
+  if (pct >= 32) return 'solid enough'
+  return 'inexpensive for a reason'
+}

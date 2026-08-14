@@ -10,7 +10,8 @@ import {
 import { Q_SCHOOL_FEE, cardStatus, CARD_LABELS } from '../game/eligibility.js'
 import { fmtMoney } from '../game/finance.js'
 import { techBaseline } from '../game/equipment.js'
-import { coachTrainingBonus } from '../game/staff.js'
+import { coachTrainingBonus, qualityOf, qualityEffect, qualityBand } from '../game/staff.js'
+import { ratingTextColor } from '../game/ratings.js'
 import { marketability } from '../game/sponsors.js'
 import { plural } from '../game/narrative.js'
 import { Card, Option, Chip, Money, Empty, StatGrid, Stat, CircuitChip } from './ui.jsx'
@@ -387,8 +388,21 @@ function Training({ state, actions }) {
             <Row k="Age" v={`${p.age} → ${p.age + 1}`} note={ageNote(p.age)} />
             <Row
               k="Coach"
-              v={state.staff.coach ? `${state.staff.coach.name} (${(state.staff.coach.q * 100).toFixed(0)})` : 'None'}
-              note={state.staff.coach ? state.staff.coach.traitLabel : 'Without a coach, most of your training is wasted.'}
+              v={
+                state.staff.coach ? (
+                  <>
+                    {state.staff.coach.name} · quality{' '}
+                    <b className={ratingTextColor(qualityOf(state.staff.coach))}>{qualityOf(state.staff.coach)}</b>
+                  </>
+                ) : (
+                  'None'
+                )
+              }
+              note={
+                state.staff.coach
+                  ? `${state.staff.coach.traitLabel} — ${qualityBand(qualityOf(state.staff.coach))}. ${qualityEffect('coach', state.staff.coach.q)}`
+                  : 'Without a coach, most of your training is wasted.'
+              }
             />
             <Row k="Morale" v={`${Math.round(p.morale)}%`} note={p.morale < 40 ? 'Low morale blunts the work.' : 'Engaged and putting the hours in.'} />
             <Row k="Career mileage" v={plural(p.starts, 'start')} note={p.starts > 400 ? 'The miles are starting to tell.' : 'Body still fresh enough.'} />
@@ -462,6 +476,8 @@ function StaffMarket({ state, actions }) {
             {market.map((c) => {
               const isCurrent = current && current.id === c.id
               const affordable = role === 'agent' || state.finance.cash > c.salary * 0.5
+              const q = qualityOf(c)
+              const diff = current ? q - qualityOf(current) : null
               return (
                 <Option
                   key={c.id}
@@ -471,13 +487,48 @@ function StaffMarket({ state, actions }) {
                   title={`${c.flag} ${c.name} — ${c.tierLabel}`}
                   desc={`${c.traitLabel}${affordable ? '' : ' · you cannot really afford this'}`}
                   right={
-                    role === 'agent'
-                      ? `${Math.round(c.cut * 100)}% cut · ${c.sponsorMult.toFixed(2)}× deals`
-                      : `${fmtMoney(c.salary, { compact: true })}/yr · Q${Math.round(c.q * 100)}`
+                    <span className="col" style={{ alignItems: 'flex-end', gap: 2 }}>
+                      <span>
+                        <span className={ratingTextColor(q)} style={{ fontWeight: 700 }}>
+                          {q}
+                        </span>
+                        <span className="xs muted-2"> quality</span>
+                        {diff !== null && diff !== 0 ? (
+                          <span className={`xs ${diff > 0 ? 'delta-up' : 'delta-down'}`}>
+                            {' '}
+                            {diff > 0 ? '+' : ''}
+                            {diff}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="xs muted-2">
+                        {role === 'agent'
+                          ? `${Math.round(c.cut * 100)}% cut · ${c.sponsorMult.toFixed(2)}× deals`
+                          : `${fmtMoney(c.salary, { compact: true })}/yr`}
+                      </span>
+                    </span>
                   }
                 />
               )
             })}
+          </div>
+          <div className="xs muted-2" style={{ marginTop: 10, lineHeight: 1.5 }}>
+            <b>Quality</b> runs 0–100 and is the single number behind everything this person does for you. The tier
+            label is the same thing in words: Journeyman around 20, Solid 42, Well regarded 62, Elite 80, Legendary 95.
+            {current ? ' The figure beside each candidate is how they compare with the person you have.' : ''}
+          </div>
+          <div className="xs muted" style={{ marginTop: 8, lineHeight: 1.5 }}>
+            <div className="b" style={{ marginBottom: 2 }}>
+              {current ? (
+                <>
+                  What {current.name} is worth to you, at quality{' '}
+                  <span className={ratingTextColor(qualityOf(current))}>{qualityOf(current)}</span>
+                </>
+              ) : (
+                `What a well-regarded ${roleDef.name.toLowerCase()} would be worth, at quality 62`
+              )}
+            </div>
+            {qualityEffect(role, current ? current.q : 0.62)}
           </div>
         </Card>
         <div className="col">
@@ -500,10 +551,13 @@ function StaffMarket({ state, actions }) {
                   </div>
                   {s ? (
                     <div className="xs muted">
-                      {s.flag} {s.name} · {s.tierLabel} · {s.traitLabel} ·{' '}
+                      {s.flag} {s.name} · quality{' '}
+                      <b className={ratingTextColor(qualityOf(s))}>{qualityOf(s)}</b> · {s.tierLabel} · {s.traitLabel} ·{' '}
                       {r.id === 'agent' ? `${Math.round(s.cut * 100)}% cut` : `${fmtMoney(s.salary, { compact: true })}/yr`}
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="xs muted-2">{r.blurb}</div>
+                  )}
                 </div>
               )
             })}
