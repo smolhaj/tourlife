@@ -71,6 +71,25 @@ export function simTournament(event, entrants, rng, opts = {}) {
 
   rows.sort((a, b) => a.raw - b.raw)
 
+  // A tie for the lead goes to a playoff. Without this every player level at
+  // the top was credited with the win — which happened in a fifth of all
+  // events — and "won it in a playoff" could never actually occur.
+  let playoffSize = 0
+  if (rows.length > 1 && Math.round(rows[0].raw) === Math.round(rows[1].raw)) {
+    let last = 1
+    while (last + 1 < rows.length && Math.round(rows[last + 1].raw) === Math.round(rows[0].raw)) last++
+    playoffSize = last + 1
+    // Extra holes favour the better player, but only just.
+    const contenders = rows.slice(0, playoffSize)
+    const best = Math.max(...contenders.map((c) => c.entrant.quality))
+    const winner = rng.pickWeighted(contenders, (c) => Math.exp((c.entrant.quality - best) * 0.09))
+    const idx = rows.indexOf(winner)
+    if (idx > 0) {
+      rows.splice(idx, 1)
+      rows.unshift(winner)
+    }
+  }
+
   // Round scores are only needed for leaderboards we actually show.
   const detailCount = opts.detailed ? Math.min(rows.length, opts.detailRows || 25) : 0
 
@@ -87,6 +106,9 @@ export function simTournament(event, entrants, rng, opts = {}) {
     const scoreInt = Math.round(rows[i].raw)
     let j = i
     while (j + 1 < rows.length && Math.round(rows[j + 1].raw) === scoreInt) j++
+    // The playoff winner stands alone at the top; everyone they beat there
+    // shares second on the same score.
+    if (i === 0 && playoffSize > 1) j = 0
     const groupSize = j - i + 1
     const tied = groupSize > 1
     for (let k = i; k <= j; k++) {
@@ -156,6 +178,7 @@ export function simTournament(event, entrants, rng, opts = {}) {
     fieldSize: rows.length,
     meanQuality,
     strengthMult,
+    playoff: playoffSize > 1 ? playoffSize : 0,
   }
 }
 

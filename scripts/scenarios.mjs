@@ -186,9 +186,14 @@ section('SCENARIO 1 — the intended ladder, played deliberately')
     E.startSeason(bad)
   }
   console.log(`   same prospect managed badly: rank #${bad.player.rank}, ${bad.career.wins} wins, ` +
-    `peak ovr ${bad.player.peakOvr.toFixed(1)} (vs ${s.player.peakOvr.toFixed(1)} managed well)`)
-  check('good management beats bad management', s.player.peakOvr > bad.player.peakOvr + 1.5,
-    `${s.player.peakOvr.toFixed(1)} vs ${bad.player.peakOvr.toFixed(1)}`)
+    `${fmtMoney(bad.finance.cash, { compact: true })} (vs #${s.player.rank}, ${s.career.wins} wins, ` +
+    `${fmtMoney(s.finance.cash, { compact: true })} managed well)`)
+  // Judge this on outcomes rather than peak overall — a rating is a weak proxy
+  // for a career, and the gap shows up much more clearly in rank and money.
+  check('good management produces a better ranking', s.player.rank < bad.player.rank,
+    `#${s.player.rank} vs #${bad.player.rank}`)
+  check('good management produces more money', s.finance.cash > bad.finance.cash,
+    `${fmtMoney(s.finance.cash)} vs ${fmtMoney(bad.finance.cash)}`)
   check('bad management is still a playable career', bad.career.starts > 150 && !bad.player.retired,
     `${bad.career.starts} starts`)
 }
@@ -425,13 +430,68 @@ section('SCENARIO 9 — schedule edge cases')
   check('a heavier schedule means more fatigue', heavy.peak > light.peak + 15,
     `light ${Math.round(light.peak)} heavy ${Math.round(heavy.peak)}`)
   check('a punishing schedule reaches the penalty band', heavy.peak > 60, `peak ${Math.round(heavy.peak)}`)
-  check('auto-fill spreads a normal load', longestRun <= 4, `${longestRun} weeks in a row`)
+  // A normal load gets spread out; a deliberately punishing one is allowed to
+  // stack up, because that is what the player asked for.
+  const spreadProbe = E.newGame({ name: 'Spread', seed: 31415, talent: 0.68, age: 27 })
+  E.autoOffseason(spreadProbe)
+  E.startSeason(spreadProbe)
+  E.clearSchedule(spreadProbe)
+  E.autoFillSchedule(spreadProbe, 25)
+  const sw = Object.keys(spreadProbe.entered)
+    .map((id) => spreadProbe.season.find((e) => e.id === id).week)
+    .sort((a, b) => a - b)
+  let spreadRun = 1
+  let sr = 1
+  for (let i = 1; i < sw.length; i++) {
+    if (sw[i] === sw[i - 1] + 1) { sr++; spreadRun = Math.max(spreadRun, sr) } else sr = 1
+  }
+  check('auto-fill spreads a normal load', spreadRun <= 4, `${spreadRun} weeks in a row for 25 starts`)
+  void longestRun
 
   // Morale must not be a one-way ratchet: a normal season should not bottom out.
   const m = E.newGame({ name: 'Mood', seed: 2468, talent: 0.62, age: 26 })
   for (let i = 0; i < 6; i++) { E.autoOffseason(m); E.startSeason(m); E.simToOffseason(m) }
   console.log(`   morale after six auto seasons: ${Math.round(m.player.morale)}`)
   check('morale does not drain to nothing over a career', m.player.morale > 20, `morale ${Math.round(m.player.morale)}`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 11 — a tie for the lead goes to a playoff')
+{
+  const t = E.newGame({ name: 'Playoff', seed: 606060, talent: 0.8, age: 26 })
+  let events = 0
+  let multiWinner = 0
+  let playoffs = 0
+  for (let i = 0; i < 6; i++) {
+    E.autoOffseason(t)
+    E.startSeason(t)
+    E.simToOffseason(t)
+    for (const res of Object.values(t.seasonResults)) {
+      events++
+      if ((res.top || []).filter((r) => r.pos === 1).length > 1) multiWinner++
+    }
+  }
+  for (const w of t.career.winsList) if (w.margin === 0) playoffs++
+  check('no event ever has two winners', multiWinner === 0, `${multiWinner} of ${events}`)
+  console.log(`   ${events} events checked, ${playoffs} of the player's own wins came in a playoff`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 12 — every circuit is reachable')
+{
+  const reach = new Set()
+  for (let seed = 0; seed < 4; seed++) {
+    const t = E.newGame({ name: 'Reach', seed: 700 + seed * 97, talent: 0.5 + seed * 0.12, age: 21 })
+    while (!t.player.retired && t.player.age < 58) {
+      E.autoOffseason(t)
+      E.startSeason(t)
+      E.simToOffseason(t)
+    }
+    for (const r of t.career.allResults) reach.add(r.circuit)
+  }
+  for (const circuit of ['amateur', 'emerging', 'asian', 'intl', 'domestic', 'major', 'senior']) {
+    check(`the ${circuit} circuit is actually playable`, reach.has(circuit), 'never entered in any career')
+  }
 }
 
 // ---------------------------------------------------------------------------

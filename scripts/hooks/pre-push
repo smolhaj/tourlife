@@ -1,0 +1,10 @@
+#!/bin/sh
+# Opt-in local gate. Enable with:
+#   git config core.hooksPath scripts/hooks
+# Runs the same suites CI runs, in about 45 seconds, using no CI minutes.
+echo "Running Tour Life test suites before push…"
+npm test || {
+  echo
+  echo "Tests failed — push aborted. Use 'git push --no-verify' to override."
+  exit 1
+}

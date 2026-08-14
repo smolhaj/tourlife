@@ -175,6 +175,10 @@ export function resolveCards(state, rng) {
     grantCard(state, 'domestic', 'full', 2)
     notes.push('You finished high enough on the International Tour money list to earn a Domestic Tour card.')
   }
+  if (emergingMoney >= 55000 * infl && cardStatus(state, 'asian') === 'none') {
+    grantCard(state, 'asian', 'conditional', 2)
+    notes.push('A respectable Emerging Circuit season has opened the Asian Circuit to you.')
+  }
   const asianMoney = moneyByCircuit.asian || 0
   if (asianMoney >= 450000 * infl && cardStatus(state, 'intl') !== 'full') {
     grantCard(state, 'intl', 'full', 2)
@@ -217,12 +221,19 @@ export function runQSchool(state, rng) {
   }
   if (roll >= 58) {
     grantCard(state, 'intl', 'full', 1)
+    grantCard(state, 'asian', 'full', 2)
     grantCard(state, 'emerging', 'full', 2)
-    return { tier: 'intl', text: 'International Tour card secured.' }
+    return { tier: 'intl', text: 'International Tour card secured, with Asian Circuit status alongside it.' }
+  }
+  if (roll >= 54) {
+    grantCard(state, 'asian', 'full', 2)
+    grantCard(state, 'emerging', 'full', 2)
+    return { tier: 'asian', text: 'A full Asian Circuit card, and Emerging Circuit status to fall back on.' }
   }
   if (roll >= 50) {
     grantCard(state, 'emerging', 'full', 2)
-    return { tier: 'emerging', text: 'Full Emerging Circuit card. A place to start.' }
+    grantCard(state, 'asian', 'conditional', 2)
+    return { tier: 'emerging', text: 'Full Emerging Circuit card, plus conditional Asian Circuit status.' }
   }
   if (roll >= 43) {
     grantCard(state, 'emerging', 'conditional', 1)

@@ -152,12 +152,12 @@ scripts/balance.mjs  headless career harness — `npm run balance`
 CI). They are deliberately not unit tests: every bug they have caught was
 emergent, invisible in any single function.
 
-**`npm run scenarios`** — ten scenarios that play whole careers and assert what
+**`npm run scenarios`** — twelve scenarios that play whole careers and assert what
 should always be true. The ladder from amateur to the majors actually connects,
 a weak player is never stranded, injuries clear and leave a mark, the same seed
 reproduces the same career, saves survive an export/import round trip,
-retiring and un-retiring both work, godmode does what it claims, and the money
-adds up.
+retiring and un-retiring both work, godmode does what it claims, no event ever
+has two winners, every circuit is actually reachable, and the money adds up.
 
 **`npm run hostile`** — malformed and truncated save files, saves from older
 builds missing fields, every slider at its extreme (NaN ratings, age 1, age
@@ -173,6 +173,16 @@ state where the player has nowhere left to enter.
 ```bash
 npm run fuzz -- --runs 60 --steps 500 --seed 777
 ```
+
+Everything runs locally with no CI involved. To gate your own pushes on it:
+
+```bash
+git config core.hooksPath scripts/hooks
+```
+
+That runs `npm test` before every push and aborts on failure (`--no-verify`
+overrides). Useful if you would rather not spend CI minutes, or are working
+offline.
 
 ### The balance harness
 
