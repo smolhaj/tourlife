@@ -1,6 +1,19 @@
 import { CAREER_PHASES, MAJOR_NARRATIVE, SENIOR_AGE } from './constants.js'
 import { fmtMoney } from './finance.js'
 
+/**
+ * Event names mostly already begin with "The", so blindly prefixing an article
+ * produced "the The County Line Open". Use this anywhere a name follows one.
+ */
+export function withArticle(name) {
+  return /^the\s/i.test(String(name || '')) ? name : `the ${name}`
+}
+
+/** "1 week" / "2 weeks" — counts of one were reading as plurals everywhere. */
+export function plural(n, singular, pluralForm) {
+  return `${n} ${Math.abs(n) === 1 ? singular : pluralForm || singular + 's'}`
+}
+
 export function careerPhase(player) {
   if (player.retired) return { id: 'retired', label: 'Retired' }
   if (player.age >= SENIOR_AGE) return { id: 'senior', label: 'Senior circuit' }

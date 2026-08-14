@@ -152,12 +152,12 @@ scripts/balance.mjs  headless career harness — `npm run balance`
 CI). They are deliberately not unit tests: every bug they have caught was
 emergent, invisible in any single function.
 
-**`npm run scenarios`** — ten scenarios that play whole careers and assert what
+**`npm run scenarios`** — twelve scenarios that play whole careers and assert what
 should always be true. The ladder from amateur to the majors actually connects,
 a weak player is never stranded, injuries clear and leave a mark, the same seed
 reproduces the same career, saves survive an export/import round trip,
-retiring and un-retiring both work, godmode does what it claims, and the money
-adds up.
+retiring and un-retiring both work, godmode does what it claims, no event ever
+has two winners, every circuit is actually reachable, and the money adds up.
 
 **`npm run hostile`** — malformed and truncated save files, saves from older
 builds missing fields, every slider at its extreme (NaN ratings, age 1, age
@@ -173,6 +173,34 @@ state where the player has nowhere left to enter.
 ```bash
 npm run fuzz -- --runs 60 --steps 500 --seed 777
 ```
+
+### Continuous integration, or the lack of it
+
+This repo deliberately spends as little GitHub Actions time as possible.
+
+`ci.yml` is **manual only** — it never runs on its own. Trigger it from the
+Actions tab when you want to check a branch you did not build locally, or a
+contributor's pull request.
+
+`deploy.yml` runs only on pushes to `main` that touch something able to change
+the built bundle (`src/`, `index.html`, the Vite config, dependencies). A
+README or test-only change produces a byte-identical `/dist`, so it does not
+republish.
+
+The real gate is local and free:
+
+```bash
+git config core.hooksPath scripts/hooks
+```
+
+That runs the full suite and a production build before every push, aborting on
+failure — about 50 seconds, no runner time (`git push --no-verify` bypasses it).
+
+If you want to drop Actions entirely, build locally into a committed folder and
+switch **Settings → Pages → Source** to *Deploy from a branch*. Branch-based
+Pages does not consume Actions minutes. The cost is that the built bundle lives
+in your history and you must remember to rebuild before pushing — which the
+pre-push hook already does for you.
 
 ### The balance harness
 

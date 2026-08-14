@@ -33,13 +33,30 @@ export const OVERALL_WEIGHTS = {
 
 // ------------------------------------------------------------------ playstyle
 
+/**
+ * `edge` shifts your expected quality; `variance` widens the spread of your
+ * scores. Aggression used to carry a positive edge *as well as* more variance,
+ * so it was handed a better average score on top of the bigger tail — a free
+ * lunch layered on the thing that was supposed to cost something. The edges are
+ * near-neutral now, which flattens average finish across all five styles and
+ * roughly doubles the spread in missed-cut rate (32% to 41% across the range,
+ * against 35% to 39% before). They still sum to about zero, so the strength of
+ * the field around you is unchanged.
+ *
+ * Worth knowing: this does not make the safe styles competitive on wins or
+ * money, and no value of `edge` can. Prize money is steeply top-heavy while a
+ * missed cut merely pays nothing, so for an above-average player in a full
+ * field the tail is worth far more than the misses cost. Aggression is the
+ * higher-expectation choice here much as it is in the real game; what the
+ * conservative end buys is cuts made and a steadier week-to-week living.
+ */
 export const PLAYSTYLES = [
   {
     id: 'ultraConservative',
     name: 'Point-and-shoot',
     blurb: 'Fairway finder. You will almost never blow up — and almost never run away with one.',
     variance: 0.74,
-    edge: -0.9,
+    edge: 0.15,
     scramble: 0.06,
     burnout: -0.04,
   },
@@ -48,7 +65,7 @@ export const PLAYSTYLES = [
     name: 'Conservative',
     blurb: 'Play the percentages. Middle of the green, two putts, move on.',
     variance: 0.87,
-    edge: -0.35,
+    edge: 0.06,
     scramble: 0.03,
     burnout: -0.02,
   },
@@ -66,7 +83,7 @@ export const PLAYSTYLES = [
     name: 'Aggressive',
     blurb: 'Take on the flag. More wins, more missed cuts.',
     variance: 1.18,
-    edge: 0.55,
+    edge: -0.1,
     scramble: -0.02,
     burnout: 0.03,
   },
@@ -75,7 +92,7 @@ export const PLAYSTYLES = [
     name: 'Send it',
     blurb: 'Driver everywhere, flag-hunting, no laying up. Feast or famine.',
     variance: 1.42,
-    edge: 1.15,
+    edge: -0.22,
     scramble: -0.05,
     burnout: 0.06,
   },

@@ -3,7 +3,7 @@ import * as E from './game/engine.js'
 import { god } from './game/engine.js'
 import { PLAYING_WEEKS } from './game/schedule.js'
 import { fmtMoney } from './game/finance.js'
-import { careerPhase, shareText } from './game/narrative.js'
+import { careerPhase, shareText, withArticle } from './game/narrative.js'
 import { CIRCUITS } from './game/constants.js'
 import {
   cloneState,
@@ -14,6 +14,7 @@ import {
   downloadSave,
   exportSave,
   importSave,
+  claimSave,
   History,
 } from './game/save.js'
 
@@ -69,7 +70,9 @@ export default function App() {
           {
             id: ++toastId.current,
             kind: 'bad',
-            text: 'Could not save to this browser. Export your career from Share to keep it.',
+            text: res.conflict
+              ? 'This career is open in another tab and has moved on there. Nothing here is being saved — reload to catch up.'
+              : 'Could not save to this browser. Export your career from Share to keep it.',
           },
         ])
       } else if (res.ok) {
@@ -94,7 +97,6 @@ export default function App() {
       if (!state) return
       const apply = () => {
         const draft = cloneState(state)
-        if (snapshot) historyRef.current.push(state, label)
         let out
         try {
           out = fn(draft)
@@ -104,6 +106,10 @@ export default function App() {
           setBusy(null)
           return
         }
+        // Snapshot only once the mutation has succeeded: an action that threw
+        // leaves the old state live, and recording it would have added an undo
+        // step that rewinds to exactly where you already are.
+        if (snapshot) historyRef.current.push(state, label)
         E.refreshDerived(draft)
         setState(draft)
         setBusy(null)
@@ -124,6 +130,9 @@ export default function App() {
 
   function startNew(opts) {
     historyRef.current.clear()
+    // Starting over deliberately takes the save away from any other tab.
+    claimSave()
+    saveWarned.current = false
     const s = E.newGame(opts)
     setState(s)
     setTab('home')
@@ -150,6 +159,7 @@ export default function App() {
   function doImport(text) {
     const s = importSave(text)
     historyRef.current.clear()
+    saveWarned.current = false
     setState(E.refreshDerived(s))
     setTab('home')
     toast('Career imported.', 'good')
@@ -163,9 +173,9 @@ export default function App() {
       const last = res?.events?.[res.events.length - 1]
       if (draft.phase === 'offseason') return { toast: `${draft.year} season complete.`, toastKind: 'good' }
       if (last) {
-        if (last.pos === 1) return { toast: `You won the ${last.name}!`, toastKind: 'good' }
-        if (!last.madeCut) return { toast: `Missed the cut at the ${last.shortName}.`, toastKind: 'bad' }
-        return { toast: `${last.tied ? 'T' : ''}${last.pos} at the ${last.shortName}.` }
+        if (last.pos === 1) return { toast: `You won ${withArticle(last.name)}!`, toastKind: 'good' }
+        if (!last.madeCut) return { toast: `Missed the cut at ${withArticle(last.shortName)}.`, toastKind: 'bad' }
+        return { toast: `${last.tied ? 'T' : ''}${last.pos} at ${withArticle(last.shortName)}.` }
       }
       return null
     },

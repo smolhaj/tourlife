@@ -18,6 +18,20 @@ export const CURVES = {
   mental: { grow: 2.2, peak: 38, declineStart: 46, declineRate: 0.3 },
 }
 
+/**
+ * A focused winter moves one attribute; a balanced one nudges all seven by a
+ * fraction each. Both are gated by how much room that attribute has left.
+ *
+ * The spread figure used to be 0.34, which — applied across seven attributes
+ * whose overall weights sum to 1 — made "a bit of everything" worth 0.34 points
+ * of overall a year against 0.06–0.21 for any specialisation. Balanced beat
+ * every focused option in every situation by between 1.6x and 5.7x, so the
+ * offseason's most frequent decision had exactly one right answer. At 0.22 the
+ * two are close enough that the gap you are training into decides it.
+ */
+export const FOCUSED_TRAINING = 1.0
+export const SPREAD_TRAINING = 0.22
+
 export function overall(ratings) {
   let sum = 0
   for (const k of ATTR_KEYS) sum += (ratings[k] || 0) * OVERALL_WEIGHTS[k]
@@ -132,9 +146,15 @@ export function progressYear(ratings, potential, age, rng, mods = {}) {
     if (k === 'consistency') delta += psych * 0.4
 
     // Work still pays after your peak, just not as much.
-    const trainScale = age <= c.peak + 4 ? 1 : clamp(1 - (age - c.peak - 4) * 0.08, 0.3, 1)
-    if (trainingAttr === k) delta += trainingPower * trainScale
-    else if (trainingAttr === 'all') delta += trainingPower * 0.34 * trainScale
+    const age_ = age <= c.peak + 4 ? 1 : clamp(1 - (age - c.peak - 4) * 0.08, 0.3, 1)
+    // And it pays where there is room left to grow. Without this, a winter
+    // spent on an attribute already at its ceiling was worth exactly as much
+    // as one spent on your worst weakness, so "a bit of everything" beat every
+    // specialisation outright and the yearly training choice had one answer.
+    const headroom = clamp((pot + 3 - cur) / 13, 0.12, 1)
+    const trainScale = age_ * headroom
+    if (trainingAttr === k) delta += trainingPower * FOCUSED_TRAINING * trainScale
+    else if (trainingAttr === 'all') delta += trainingPower * SPREAD_TRAINING * trainScale
 
     delta -= wear * (k === 'power' ? 1.2 : 0.7)
     delta -= injuryDrag * (k === 'power' || k === 'irons' ? 1.1 : 0.75)

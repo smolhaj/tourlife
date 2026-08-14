@@ -1,0 +1,28 @@
+#!/bin/sh
+# Local gate, so the project needs no CI minutes to stay honest.
+#
+# Enable once:   git config core.hooksPath scripts/hooks
+# Bypass once:   git push --no-verify
+#
+# Runs the same checks the manual CI workflow would, in about 50 seconds.
+set -e
+
+echo "→ Tour Life pre-push checks"
+
+echo "  • test suites (scenarios, hostile inputs, fuzz)"
+npm test >/tmp/tourlife-prepush.log 2>&1 || {
+  echo
+  echo "  ✗ tests failed — push aborted"
+  tail -30 /tmp/tourlife-prepush.log
+  exit 1
+}
+
+echo "  • production build"
+npm run build >>/tmp/tourlife-prepush.log 2>&1 || {
+  echo
+  echo "  ✗ build failed — push aborted"
+  tail -30 /tmp/tourlife-prepush.log
+  exit 1
+}
+
+echo "  ✓ all checks passed"

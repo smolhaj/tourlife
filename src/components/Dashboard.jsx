@@ -1,7 +1,7 @@
 import React from 'react'
 import { CIRCUITS, COURSE_TYPES, ATTRS } from '../game/constants.js'
 import { checkEligibility, nextEnteredEvent, seasonSummary, currentBurn } from '../game/engine.js'
-import { careerPhase, majorNarrative } from '../game/narrative.js'
+import { careerPhase, majorNarrative, plural } from '../game/narrative.js'
 import { overallLabel, courseFit } from '../game/ratings.js'
 import { fmtMoney, coastStatus } from '../game/finance.js'
 import { recoveryNote } from '../game/injuries.js'
@@ -34,7 +34,7 @@ export default function Dashboard({ state, onOpenResult, onGoTab }) {
           </StatGrid>
         </Card>
 
-        <Card title="Recent results" aux={state.seasonLog.length ? `${state.seasonLog.length} starts this season` : null}>
+        <Card title="Recent results" aux={state.seasonLog.length ? `${plural(state.seasonLog.length, 'start')} this season` : null}>
           {recent.length === 0 ? (
             <Empty>No starts yet this season.</Empty>
           ) : (
@@ -193,7 +193,7 @@ export default function Dashboard({ state, onOpenResult, onGoTab }) {
                     />
                     <div className="xs muted-2">
                       {h.meetings} shared leaderboards since {r.since} · {h.wins} career wins
-                      {h.majors ? `, ${h.majors} majors` : ''}
+                      {h.majors ? `, ${plural(h.majors, 'major')}` : ''}
                     </div>
                   </div>
                 )

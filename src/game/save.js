@@ -5,9 +5,48 @@ export function cloneState(state) {
   return JSON.parse(JSON.stringify(state))
 }
 
+/**
+ * Optimistic concurrency for the autosave.
+ *
+ * Two tabs open on the same career used to take turns overwriting each other
+ * with whatever state each happened to be holding: sim a year in one tab, click
+ * anything in the other, and the year was gone with nothing said. Each tab
+ * tracks the sequence number it believes is current and refuses to write over a
+ * newer one.
+ */
+const OWNER_KEY = `${SAVE_KEY}:owner`
+const TAB_ID = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+let ownedSeq = 0
+
+function readOwner() {
+  try {
+    const raw = localStorage.getItem(OWNER_KEY)
+    const o = raw ? JSON.parse(raw) : null
+    return o && typeof o.seq === 'number' ? o : null
+  } catch {
+    return null
+  }
+}
+
+/** Take ownership of whatever is on disk — after a load, import or new career. */
+export function claimSave() {
+  const cur = readOwner()
+  ownedSeq = cur ? cur.seq : 0
+}
+
 export function saveGame(state) {
   try {
+    const cur = readOwner()
+    if (cur && cur.seq !== ownedSeq) {
+      return {
+        ok: false,
+        conflict: true,
+        error: 'This career is open in another tab, which has moved further on.',
+      }
+    }
     localStorage.setItem(SAVE_KEY, JSON.stringify(state))
+    ownedSeq += 1
+    localStorage.setItem(OWNER_KEY, JSON.stringify({ tab: TAB_ID, seq: ownedSeq }))
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) }
@@ -43,6 +82,7 @@ export function loadGame() {
     if (!parsed || typeof parsed !== 'object') return null
     const state = parsed.format === 'tourlife-career' ? parsed.state : parsed
     if (!isPlayableSave(state)) return null
+    claimSave()
     return migrate(state)
   } catch {
     return null
@@ -52,6 +92,8 @@ export function loadGame() {
 export function clearSave() {
   try {
     localStorage.removeItem(SAVE_KEY)
+    localStorage.removeItem(OWNER_KEY)
+    ownedSeq = 0
   } catch {
     /* private browsing */
   }
@@ -126,9 +168,15 @@ const REQUIRED_TOP = {
 
 function fillDefaults(target, shape) {
   for (const [k, v] of Object.entries(shape)) {
-    if (target[k] === undefined || target[k] === null) {
-      target[k] = Array.isArray(v) ? [] : typeof v === 'object' ? { ...v } : v
-    }
+    if (target[k] !== undefined && target[k] !== null) continue
+    // `typeof null === 'object'`, so a null default used to fall into the
+    // spread branch and come back as {}. For the staff slots — whose empty
+    // value *is* null — that turned "you have no coach" into a truthy
+    // coach-shaped object with no fields on it on every single load.
+    if (v === null) target[k] = null
+    else if (Array.isArray(v)) target[k] = []
+    else if (typeof v === 'object') target[k] = { ...v }
+    else target[k] = v
   }
 }
 
@@ -144,7 +192,28 @@ function migrate(s) {
   for (const c of ['domestic', 'intl', 'asian', 'emerging', 'senior']) {
     if (!s.cards[c]) s.cards[c] = { status: 'none', until: 0 }
   }
+  relinkPlayer(s)
   s.version = GAME_VERSION
+  return s
+}
+
+/**
+ * In a live game `state.player` *is* the entry for you in `state.world.players`
+ * — one object, two references — which is how the world ranks you, puts you in
+ * fields and compares you to everyone else. JSON has no way to express that, so
+ * every save round-trip silently split you in two: the copy the world reasons
+ * about froze at the moment you saved while the one the UI shows kept
+ * improving. Reloading the page once a year cost a test career 8 points of
+ * overall, its only win, and about $9m. Restore the link on the way in.
+ */
+export function relinkPlayer(s) {
+  const list = s.world && Array.isArray(s.world.players) ? s.world.players : null
+  if (!list || !s.player) return s
+  // `pid` is the identity, and the user's is 0 — so compare against undefined
+  // explicitly rather than leaning on truthiness.
+  const pid = s.player.pid
+  const i = pid === undefined ? list.findIndex((p) => p && p.isUser) : list.findIndex((p) => p && p.pid === pid)
+  if (i >= 0) list[i] = s.player
   return s
 }
 
@@ -177,6 +246,8 @@ export function importSave(text) {
   const parsed = JSON.parse(text)
   const state = parsed && parsed.format === 'tourlife-career' ? parsed.state : parsed
   if (!isPlayableSave(state)) throw new Error('That does not look like a Tour Life career file.')
+  // An imported file replaces whatever was here, so this tab owns it now.
+  claimSave()
   return migrate(state)
 }
 
@@ -208,8 +279,20 @@ export class History {
     this.redoStack = []
   }
 
+  /**
+   * Takes the *outgoing* state by reference rather than cloning it. Every
+   * mutation in the app builds a fresh draft and swaps it in, so the state
+   * handed here is never written to again — cloning it was a second full deep
+   * copy of a ~1.4 MB object on every single tap, which is the kind of thing
+   * you feel on a phone and not on a laptop.
+   */
   push(state, label) {
-    this.stack.push({ label, snapshot: cloneState(state) })
+    if (!state) return
+    // Defensive: a caller that pushes the same object twice (a mutation that
+    // threw before committing, say) would otherwise get an undo step that
+    // goes nowhere.
+    if (this.stack.length && this.stack[this.stack.length - 1].snapshot === state) return
+    this.stack.push({ label, snapshot: state })
     if (this.stack.length > this.limit) this.stack.shift()
     this.redoStack.length = 0
   }
@@ -225,14 +308,16 @@ export class History {
   undo(current) {
     if (!this.stack.length) return null
     const entry = this.stack.pop()
-    this.redoStack.push({ label: entry.label, snapshot: cloneState(current) })
+    // `current` is about to be replaced by the snapshot we return, so it is
+    // safe to hold by reference for the same reason push() is.
+    if (current) this.redoStack.push({ label: entry.label, snapshot: current })
     return entry
   }
 
   redo(current) {
     if (!this.redoStack.length) return null
     const entry = this.redoStack.pop()
-    this.stack.push({ label: entry.label, snapshot: cloneState(current) })
+    if (current) this.stack.push({ label: entry.label, snapshot: current })
     return entry
   }
 
