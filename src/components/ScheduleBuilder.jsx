@@ -98,7 +98,7 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
         </div>
 
         {backToBack >= 5 ? (
-          <div className="chip red" style={{ marginBottom: 8 }}>
+          <div className="chip red wrap" style={{ marginBottom: 8 }}>
             {backToBack} weeks in a row — you will arrive at the next major exhausted
           </div>
         ) : null}

@@ -27,6 +27,11 @@
 
 html, body, #root { height: 100%; }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background:
@@ -38,6 +43,7 @@ body {
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: rgba(224, 195, 65, 0.16);
 }
 
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -147,7 +153,9 @@ a { color: var(--green); }
   font-weight: 550;
   font-size: 13px;
 }
-.tab:hover { color: var(--text); }
+@media (hover: hover) {
+  .tab:hover { color: var(--text); }
+}
 .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
 .tab .badge { margin-left: 6px; }
 
@@ -194,14 +202,20 @@ a { color: var(--green); }
   transition: background 0.12s, border-color 0.12s, transform 0.06s;
   white-space: nowrap;
 }
-.btn:hover:not(:disabled) { background: #263d32; border-color: #35543f; }
 .btn:active:not(:disabled) { transform: translateY(1px); }
+@media (hover: hover) {
+  .btn:hover:not(:disabled) { background: #263d32; border-color: #35543f; }
+}
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn.primary { background: var(--gold); color: #17210f; border-color: var(--gold); font-weight: 700; }
-.btn.primary:hover:not(:disabled) { background: #f0d558; border-color: #f0d558; }
+@media (hover: hover) {
+  .btn.primary:hover:not(:disabled) { background: #f0d558; border-color: #f0d558; }
+}
 .btn.ghost { background: transparent; }
 .btn.danger { border-color: #55322c; color: #f0a698; }
-.btn.danger:hover:not(:disabled) { background: #3a221e; }
+@media (hover: hover) {
+  .btn.danger:hover:not(:disabled) { background: #3a221e; }
+}
 .btn.sm { padding: 4px 9px; font-size: 12px; }
 .btn.xs { padding: 2px 7px; font-size: 11px; }
 .btn.block { width: 100%; justify-content: center; }
@@ -218,7 +232,7 @@ a { color: var(--green); }
   background: rgba(10, 18, 15, 0.95);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--line);
-  padding: 9px 0;
+  padding: 9px 0 calc(9px + env(safe-area-inset-bottom, 0px));
 }
 .simbar-inner {
   width: min(1280px, 100%);
@@ -231,7 +245,16 @@ a { color: var(--green); }
 }
 .simbar .spacer { flex: 1; }
 .sim-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
-.sim-scroll { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.sim-scroll {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.sim-scroll::-webkit-scrollbar { display: none; }
 .sim-aux { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; }
 .sim-more { display: none; }
 
@@ -262,15 +285,17 @@ table.tbl td {
   vertical-align: middle;
 }
 table.tbl tr:last-child td { border-bottom: none; }
-table.tbl tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
+@media (hover: hover) {
+  table.tbl tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
+}
 table.tbl .num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 table.tbl tr.me { background: rgba(224, 195, 65, 0.09); }
 table.tbl tr.me td { border-color: rgba(224, 195, 65, 0.18); }
 table.tbl tr.me td:first-child { box-shadow: inset 2px 0 0 var(--gold); }
 table.tbl tr.dim td { color: var(--muted-2); }
 
-.scroll-y { overflow-y: auto; }
-.scroll-x { overflow-x: auto; }
+.scroll-y { overflow-y: auto; overscroll-behavior-y: contain; }
+.scroll-x { overflow-x: auto; overscroll-behavior-x: contain; }
 .max-h-320 { max-height: 320px; }
 .max-h-420 { max-height: 420px; }
 
@@ -295,6 +320,7 @@ table.tbl tr.dim td { color: var(--muted-2); }
 .chip.blue { color: var(--blue); border-color: rgba(107, 158, 199, 0.35); background: rgba(107, 158, 199, 0.09); }
 .chip.orange { color: var(--orange); border-color: rgba(232, 147, 74, 0.35); background: rgba(232, 147, 74, 0.09); }
 .chip.purple { color: var(--purple); border-color: rgba(169, 138, 201, 0.35); background: rgba(169, 138, 201, 0.09); }
+.chip.wrap { white-space: normal; }
 
 .badge {
   display: inline-block;
@@ -429,7 +455,9 @@ table.tbl tr.dim td { color: var(--muted-2); }
 .modal-body { padding: 16px 18px; }
 .modal-foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .x { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; padding: 2px 6px; }
-.x:hover { color: var(--text); }
+@media (hover: hover) {
+  .x:hover { color: var(--text); }
+}
 
 /* ----------------------------------------------------------------- forms */
 
@@ -458,7 +486,9 @@ input[type='range'] { width: 100%; accent-color: var(--gold); }
   transition: border-color 0.12s, background 0.12s;
   width: 100%;
 }
-.option:hover { border-color: #365542; background: var(--panel-2); }
+@media (hover: hover) {
+  .option:hover { border-color: #365542; background: var(--panel-2); }
+}
 .option.sel { border-color: var(--gold); background: rgba(224, 195, 65, 0.08); }
 .option .t { font-weight: 650; font-size: 13px; }
 .option .d { font-size: 12px; color: var(--muted); }
@@ -486,7 +516,9 @@ input[type='range'] { width: 100%; accent-color: var(--gold); }
   border: 1px solid transparent; font-size: 11px; background: rgba(255,255,255,0.02);
   text-align: left; width: 100%;
 }
-.evopt:hover { background: rgba(255,255,255,0.06); }
+@media (hover: hover) {
+  .evopt:hover { background: rgba(255,255,255,0.06); }
+}
 .evopt.on { border-color: var(--gold); background: rgba(224, 195, 65, 0.12); }
 .evopt.locked { opacity: 0.42; cursor: not-allowed; }
 
@@ -502,14 +534,31 @@ input[type='range'] { width: 100%; accent-color: var(--gold); }
 .busy {
   position: fixed;
   inset: 0;
-  background: rgba(5, 11, 9, 0.72);
+  background: rgba(5, 11, 9, 0.86);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 200;
   flex-direction: column;
   gap: 14px;
+  padding: 20px;
+  text-align: center;
 }
+.busy > .spinner,
+.busy > div { position: relative; }
+.busy-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.busy-progress { width: min(320px, 78vw); }
 .spinner {
   width: 34px; height: 34px;
   border: 3px solid var(--line);
@@ -521,7 +570,18 @@ input[type='range'] { width: 100%; accent-color: var(--gold); }
 
 /* ------------------------------------------------------------------- toast */
 
-.toasts { position: fixed; right: 14px; bottom: 66px; z-index: 150; display: flex; flex-direction: column; gap: 8px; max-width: 340px; }
+.toasts {
+  position: fixed;
+  right: 14px;
+  bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 340px;
+  /* Purely informational — they must not block the UI they sit on top of. */
+  pointer-events: none;
+}
 .toast {
   background: var(--panel-3);
   border: 1px solid var(--line);
@@ -574,6 +634,43 @@ input[type='range'] { width: 100%; accent-color: var(--gold); }
 
 /* ------------------------------------------------------------------ mobile */
 
+/* Touch sizing is about the input device, not the screen width — a tablet or a
+   touchscreen laptop needs the same treatment as a phone. */
+@media (pointer: coarse) {
+  .btn { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; }
+  .btn.sm { min-height: 34px; padding: 6px 11px; }
+  .btn.xs { min-height: 30px; padding: 5px 9px; }
+  .tab { padding-top: 12px; padding-bottom: 12px; }
+  .x { min-width: 42px; min-height: 42px; font-size: 24px; }
+  .evopt { min-height: 34px; align-items: center; }
+  .option { min-height: 44px; }
+  input[type='range'] { height: 34px; }
+}
+
+/* The sim bar collapses on anything too narrow to lay it out in one row —
+   which includes a phone held in landscape. */
+@media (max-width: 900px) {
+  .simbar-inner { flex-direction: column; align-items: stretch; }
+  .sim-row { width: 100%; }
+  .sim-row > .btn.primary { flex: 1 1 auto; }
+  .sim-scroll { flex: 1 1 auto; -webkit-overflow-scrolling: touch; }
+  .sim-more { display: inline-flex; flex: 0 0 auto; }
+  .sim-aux { display: none; flex-wrap: wrap; }
+  .sim-aux.open { display: flex; }
+}
+
+/* Landscape phones have almost no vertical room; give it back. */
+@media (max-height: 520px) and (pointer: coarse) {
+  .topbar-inner { padding: 5px 12px; gap: 8px; }
+  .brand { display: none; }
+  .ident .sub { font-size: 10px; }
+  .hstat .k { font-size: 8px; }
+  .hstat .v { font-size: 12px; }
+  .simbar { padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); }
+  .simbar .btn { min-height: 34px; }
+  .card { padding: 10px; }
+}
+
 @media (max-width: 780px) {
   .shell { padding: 0 10px 90px; }
   .topbar-inner { padding: 8px 10px; gap: 10px; }
@@ -591,22 +688,8 @@ input[type='range'] { width: 100%; accent-color: var(--gold); }
   .card { padding: 11px; }
   .tab { padding: 9px 11px; font-size: 12px; }
 
-  /* The sim bar collapses to one row; everything else hides behind "More". */
-  .simbar-inner { flex-direction: column; align-items: stretch; padding: 0 10px; }
-  .sim-row { width: 100%; }
-  .sim-row > .btn.primary { flex: 1 1 auto; }
-  .sim-scroll {
-    overflow-x: auto;
-    flex: 1 1 auto;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-  .sim-scroll::-webkit-scrollbar { display: none; }
-  .sim-more { display: inline-flex; flex: 0 0 auto; }
-  .sim-aux { display: none; flex-wrap: wrap; }
-  .sim-aux.open { display: flex; }
-  .simbar .btn { min-height: 38px; }
-  .simbar .btn.sm { padding: 7px 11px; font-size: 12px; }
+  .simbar-inner { padding: 0 10px; }
+  .simbar .btn.sm { font-size: 12px; }
 
   .toasts { right: 8px; left: 8px; bottom: 72px; max-width: none; }
 

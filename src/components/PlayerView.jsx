@@ -59,6 +59,7 @@ export default function PlayerView({ state }) {
           <div className="grid grid-2">
             <div>
               <div className="section-title">Age curve</div>
+              <div className="tbl-wrap">
               <table className="tbl">
                 <thead>
                   <tr>
@@ -87,6 +88,7 @@ export default function PlayerView({ state }) {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
             <div>
               <div className="section-title">Overall by season</div>

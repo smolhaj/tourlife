@@ -55,9 +55,27 @@ export default function App() {
 
   // ------------------------------------------------------------- persistence
 
+  const saveWarned = useRef(false)
   useEffect(() => {
     if (!state) return
-    const t = setTimeout(() => saveGame(state), 400)
+    const t = setTimeout(() => {
+      const res = saveGame(state)
+      // Private browsing and full quotas both fail here; losing a career
+      // silently is far worse than an ugly warning.
+      if (!res.ok && !saveWarned.current) {
+        saveWarned.current = true
+        setToasts((cur) => [
+          ...cur,
+          {
+            id: ++toastId.current,
+            kind: 'bad',
+            text: 'Could not save to this browser. Export your career from Share to keep it.',
+          },
+        ])
+      } else if (res.ok) {
+        saveWarned.current = false
+      }
+    }, 400)
     return () => clearTimeout(t)
   }, [state])
 
@@ -143,6 +161,49 @@ export default function App() {
       return null
     },
     [],
+  )
+
+  /**
+   * Multi-year jumps are the one operation slow enough to feel broken on a
+   * phone, so they run one season per frame with a progress read-out instead
+   * of blocking for ten seconds behind a spinner.
+   */
+  const runYears = useCallback(
+    (targetYear, label) => {
+      if (!state) return
+      const draft = cloneState(state)
+      historyRef.current.push(state, label)
+      const total = Math.max(1, targetYear - state.year)
+      setBusy({ text: label, done: 0, total, year: state.year })
+
+      let guard = 0
+      const step = () => {
+        try {
+          if (draft.year >= targetYear || draft.player.retired || guard >= 60) {
+            E.refreshDerived(draft)
+            setState(draft)
+            setBusy(null)
+            if (draft.player.retired) toast('Your career ended during the jump.', 'bad')
+            else toast(`Simmed through to ${draft.year}.`, 'good')
+            return
+          }
+          if (draft.phase === 'offseason') {
+            E.autoOffseason(draft)
+            E.startSeason(draft)
+          }
+          E.simToOffseason(draft)
+          guard += 1
+          setBusy({ text: label, done: guard, total, year: draft.year })
+          setTimeout(step, 0)
+        } catch (err) {
+          console.error(err)
+          setBusy(null)
+          toast(`Simulation stopped: ${err.message}`, 'bad')
+        }
+      }
+      setTimeout(step, 0)
+    },
+    [state, toast],
   )
 
   const sim = useCallback(
@@ -238,6 +299,64 @@ export default function App() {
     }
   }, [state, run, sim, toast])
 
+  /**
+   * Memoised so that ticking the progress overlay during a multi-year jump
+   * does not re-render every table sitting behind it.
+   */
+  const shellBody = useMemo(() => {
+    if (!state || !actions) return null
+    if (state.phase === 'retired') {
+      return (
+        <div style={{ paddingTop: 20 }}>
+          <RetiredScreen
+            state={state}
+            onNewCareer={() => {
+              clearSave()
+              setState(null)
+            }}
+            onExport={() => downloadSave(state)}
+            onUnretire={() => run('un-retire', (d) => E.unretire(d))}
+          />
+        </div>
+      )
+    }
+    if (state.phase === 'offseason') {
+      return (
+        <div style={{ paddingTop: 14 }}>
+          <Offseason state={state} actions={actions} />
+        </div>
+      )
+    }
+    return (
+      <>
+        <nav className="tabs" style={{ marginTop: 4 }}>
+          {TABS.map(([id, label]) => (
+            <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+        <div style={{ paddingTop: 14 }}>
+          {tab === 'home' ? <Dashboard state={state} onOpenResult={setResultId} onGoTab={setTab} /> : null}
+          {tab === 'schedule' ? (
+            <ScheduleBuilder
+              state={state}
+              forNext={false}
+              onToggle={actions.toggleEntry}
+              onAuto={actions.autoSchedule}
+              onClear={actions.clearSchedule}
+              onQualify={actions.attemptQualifier}
+            />
+          ) : null}
+          {tab === 'player' ? <PlayerView state={state} /> : null}
+          {tab === 'career' ? <CareerView state={state} /> : null}
+          {tab === 'money' ? <MoneyView state={state} onSetLifestyle={actions.setLifestyle} /> : null}
+          {tab === 'world' ? <WorldView state={state} /> : null}
+        </div>
+      </>
+    )
+  }, [state, actions, tab, run])
+
   // ------------------------------------------------------------------ render
 
   if (!state) {
@@ -299,52 +418,7 @@ export default function App() {
         </div>
       </header>
 
-      <div className="shell">
-        {retired ? (
-          <div style={{ paddingTop: 20 }}>
-            <RetiredScreen
-              state={state}
-              onNewCareer={() => {
-                clearSave()
-                setState(null)
-              }}
-              onExport={() => downloadSave(state)}
-              onUnretire={() => run('un-retire', (d) => E.unretire(d))}
-            />
-          </div>
-        ) : state.phase === 'offseason' ? (
-          <div style={{ paddingTop: 14 }}>
-            <Offseason state={state} actions={actions} />
-          </div>
-        ) : (
-          <>
-            <nav className="tabs" style={{ marginTop: 4 }}>
-              {TABS.map(([id, label]) => (
-                <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
-                  {label}
-                </button>
-              ))}
-            </nav>
-            <div style={{ paddingTop: 14 }}>
-              {tab === 'home' ? <Dashboard state={state} onOpenResult={setResultId} onGoTab={setTab} /> : null}
-              {tab === 'schedule' ? (
-                <ScheduleBuilder
-                  state={state}
-                  forNext={false}
-                  onToggle={actions.toggleEntry}
-                  onAuto={actions.autoSchedule}
-                  onClear={actions.clearSchedule}
-                  onQualify={actions.attemptQualifier}
-                />
-              ) : null}
-              {tab === 'player' ? <PlayerView state={state} /> : null}
-              {tab === 'career' ? <CareerView state={state} /> : null}
-              {tab === 'money' ? <MoneyView state={state} onSetLifestyle={actions.setLifestyle} /> : null}
-              {tab === 'world' ? <WorldView state={state} /> : null}
-            </div>
-          </>
-        )}
-      </div>
+      <div className="shell">{shellBody}</div>
 
       {!retired ? (
         <div className="simbar">
@@ -406,8 +480,26 @@ export default function App() {
 
       {busy ? (
         <div className="busy">
-          <div className="spinner" />
-          <div className="muted">{busy}…</div>
+          <div className="busy-panel">
+            <div className="spinner" />
+            <div className="muted">{typeof busy === 'string' ? `${busy}…` : `${busy.text}…`}</div>
+            {typeof busy === 'object' && busy.total > 1 ? (
+              <div className="busy-progress">
+                <div className="meter" style={{ height: 8 }}>
+                  <div
+                    className="fill"
+                    style={{ width: `${(busy.done / busy.total) * 100}%`, background: 'var(--gold)' }}
+                  />
+                </div>
+                <div className="row between xs muted-2" style={{ marginTop: 6 }}>
+                  <span>{busy.year} season</span>
+                  <span className="mono">
+                    {busy.done}/{busy.total}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
@@ -440,11 +532,11 @@ export default function App() {
           onClose={() => setShowJump(false)}
           onJump={(targetAge) => {
             setShowJump(false)
-            sim(`Simming to age ${targetAge}`, (d) => E.simToAge(d, targetAge), true)
+            runYears(state.year + (targetAge - state.player.age), `Simming to age ${targetAge}`)
           }}
           onJumpYear={(y) => {
             setShowJump(false)
-            sim(`Simming to ${y}`, (d) => E.simYears(d, y), true)
+            runYears(y, `Simming to ${y}`)
           }}
         />
       ) : null}

@@ -137,6 +137,7 @@ function Review({ state, last, os }) {
 
         {os.seasonBest?.length ? (
           <Card title="Best weeks of the year">
+            <div className="tbl-wrap">
             <table className="tbl">
               <thead>
                 <tr>
@@ -169,6 +170,7 @@ function Review({ state, last, os }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </Card>
         ) : null}
       </div>

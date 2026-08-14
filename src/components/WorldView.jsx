@@ -71,6 +71,7 @@ function Ranking({ state }) {
       <div className="col">
         <Card title="You versus the tour">
           {avg ? (
+            <div className="tbl-wrap">
             <table className="tbl">
               <thead>
                 <tr>
@@ -108,6 +109,7 @@ function Ranking({ state }) {
                 </tr>
               </tbody>
             </table>
+            </div>
           ) : (
             <Empty>No tour data.</Empty>
           )}
@@ -172,6 +174,7 @@ function Rivals({ state }) {
       </Card>
     ) : null}
     <Card title="Head to head" aux="players you have met at least four times">
+      <div className="tbl-wrap">
       <table className="tbl">
         <thead>
           <tr>
@@ -208,6 +211,7 @@ function Rivals({ state }) {
           })}
         </tbody>
       </table>
+      </div>
     </Card>
     </div>
   )

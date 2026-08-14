@@ -112,6 +112,7 @@ export default function MoneyView({ state, onSetLifestyle }) {
           {state.sponsors.deals.length === 0 ? (
             <Empty>Nobody is paying you to wear their logo. Win something.</Empty>
           ) : (
+            <div className="tbl-wrap">
             <table className="tbl">
               <thead>
                 <tr>
@@ -142,6 +143,7 @@ export default function MoneyView({ state, onSetLifestyle }) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
           <div className="row between" style={{ marginTop: 8 }}>
             <span className="muted small">Contracted income</span>

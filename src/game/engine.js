@@ -318,16 +318,32 @@ function affinity(p, event) {
   return 0.003
 }
 
-/** Circuit-eligible candidates, cached for the week being simulated. */
+/**
+ * Circuit-eligible candidates for this week. The caller passes a cache holding
+ * the week's non-retired roster so each event filters a smaller list rather
+ * than rescanning every player who ever turned pro.
+ */
 function circuitPool(state, event, cache) {
-  const key = `${event.circuit}:${event.week}`
-  let pool = cache.get(key)
+  let active = cache.get('#active')
+  if (!active) {
+    active = state.world.players.filter((p) => !p.isUser && !p.retired)
+    cache.set('#active', active)
+  }
+  let pool = cache.get(event.circuit)
   if (!pool) {
-    pool = state.world.players.filter((p) => !p.isUser && aiPlayable(p, event))
-    cache.set(key, pool)
+    pool = active.filter((p) => aiPlayable(p, event))
+    cache.set(event.circuit, pool)
   }
   return pool
 }
+
+/**
+ * Affinity below this is "the occasional crossover entry". Rather than scoring
+ * every one of several hundred such players for every event, we sample them in
+ * proportion to their affinity and give the survivors the threshold weight —
+ * same expected field composition, a fraction of the work.
+ */
+const THIN_AFFINITY = 0.2
 
 /**
  * Pick who shows up. Majors force in the world's best; ordinary events lean on
@@ -354,16 +370,22 @@ function selectField(state, event, rng, includeUser, cache) {
   }
 
   // Weighted reservoir (exponential-race form) for the rest of the field.
+  const need = size - chosen.length - (includeUser ? 1 : 0)
+  if (need <= 0) return chosen
+
   const remaining = []
   for (const p of pool) {
-    if (used.has(p.pid)) continue
-    const aff = affinity(p, event)
+    if (used.size && used.has(p.pid)) continue
+    let aff = affinity(p, event)
     if (aff <= 0) continue
+    if (aff < THIN_AFFINITY) {
+      if (rng.next() * THIN_AFFINITY > aff) continue
+      aff = THIN_AFFINITY
+    }
     const w = aff * p.propensity * (1 + clamp(p.rankPoints / 120, 0, 1.4))
     remaining.push({ p, key: -Math.log(rng.next() + 1e-12) / w })
   }
   remaining.sort((a, b) => a.key - b.key)
-  const need = size - chosen.length - (includeUser ? 1 : 0)
   for (let i = 0; i < need && i < remaining.length; i++) chosen.push(remaining[i].p)
 
   return chosen
