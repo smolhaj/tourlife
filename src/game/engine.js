@@ -585,6 +585,11 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
     const moraleEdge = (p.morale - 55) * 0.018
     const e = makeEntrant(p, state.effRatings, event, {
       qualityBonus: support.quality + moraleEdge + (state.godBoost || 0),
+      // Nerves are for mortals. Without this the boosted player leads after 54
+      // holes, catches the Sunday pressure penalty like anyone else, and can
+      // still be run down — which is not what a button called "force win" is
+      // for.
+      ignorePressure: !!state.godBoost,
     })
     e.sigma *= support.sigmaMult
     if (state.godBoost) state.godBoost = 0
@@ -1161,6 +1166,9 @@ function trimResult(r) {
     points: r.points,
     isUser: r.isUser,
     rounds: r.rounds || null,
+    // Where they stood going into Sunday, when the rounds were played out.
+    pos54: r.pos54,
+    through54: r.through54,
   }
 }
 

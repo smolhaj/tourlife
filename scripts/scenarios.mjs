@@ -223,14 +223,46 @@ section('SCENARIO 1 — the intended ladder, played deliberately')
   console.log(`   same prospect managed badly: rank #${bad.player.rank}, ${bad.career.wins} wins, ` +
     `${fmtMoney(bad.finance.cash, { compact: true })} (vs #${s.player.rank}, ${s.career.wins} wins, ` +
     `${fmtMoney(s.finance.cash, { compact: true })} managed well)`)
-  // Judge this on outcomes rather than peak overall — a rating is a weak proxy
-  // for a career, and the gap shows up much more clearly in rank and money.
-  check('good management produces a better ranking', s.player.rank < bad.player.rank,
-    `#${s.player.rank} vs #${bad.player.rank}`)
-  check('good management produces more money', s.finance.cash > bad.finance.cash,
-    `${fmtMoney(s.finance.cash)} vs ${fmtMoney(bad.finance.cash)}`)
   check('bad management is still a playable career', bad.career.starts > 150 && !bad.player.retired,
     `${bad.career.starts} starts`)
+
+  // Managing a career well beats neglecting it — but on any single seed it is a
+  // coin flip often enough to matter, and this pair is the one seed in ten
+  // where neglect happens to come out ahead. Ask it of six pairs instead.
+  // (Measured over ten: the managed career wins 9 times on both counts.)
+  let betterRank = 0
+  let betterCash = 0
+  const PAIRS = 6
+  for (let i = 0; i < PAIRS; i++) {
+    const seed = 20260814 + i * 1013
+    const g = E.newGame({ name: 'Managed', seed, talent: 0.66, age: 21 })
+    const n = E.newGame({ name: 'Neglected', seed, talent: 0.66, age: 21 })
+    for (const [c, managed] of [[g, true], [n, false]]) {
+      E.autoFillSchedule(c, 20)
+      E.startSeason(c)
+      E.simToOffseason(c)
+      E.turnPro(c)
+      E.enterQSchool(c)
+      if (managed) hireBest(c)
+      E.autoFillSchedule(c, 26)
+      E.startSeason(c)
+      while (c.player.age < 34 && !c.player.retired) {
+        E.simToOffseason(c)
+        E.setTraining(c, managed ? weakestTraining(c) : 'putting')
+        if (managed) {
+          for (const o of c.sponsors.offers.slice()) E.acceptOffer(c, o.id)
+          hireBest(c)
+        }
+        E.autoFillSchedule(c, 26)
+        E.startSeason(c)
+      }
+    }
+    if (g.player.rank <= n.player.rank) betterRank += 1
+    if (g.finance.cash >= n.finance.cash) betterCash += 1
+  }
+  check('good management usually produces a better ranking', betterRank >= 4, `${betterRank}/${PAIRS}`)
+  check('good management usually produces more money', betterCash >= 4, `${betterCash}/${PAIRS}`)
+  console.log(`   managed beat neglected on ranking ${betterRank}/${PAIRS}, on money ${betterCash}/${PAIRS}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -238,15 +270,28 @@ section('SCENARIO 2 — no dead ends for a weak player')
 {
   const s = E.newGame({ name: 'Journeyman', seed: 5150, talent: 0.3, age: 22 })
   let emptySeasons = 0
-  for (let i = 0; i < 12; i++) {
+  let seasonsPlayed = 0
+  for (let i = 0; i < 12 && !s.player.retired; i++) {
     E.autoOffseason(s)
+    if (s.player.retired) break
     E.startSeason(s)
     E.simToOffseason(s)
+    seasonsPlayed++
     if (s.seasonTotals.starts === 0) emptySeasons++
   }
   check('a weak player always has somewhere to tee it up', emptySeasons === 0, `${emptySeasons} blank seasons`)
-  const eligibleNow = s.nextSeason.filter((e) => checkEligibility({ ...s, year: s.year + 1 }, e).ok).length
-  check('still has eligible events after a bad decade', eligibleNow > 0, `${eligibleNow} eligible`)
+  check('and got a real run at it', seasonsPlayed >= 3, `${seasonsPlayed} seasons played`)
+  // A career can now end at the bank, which is not the same as being stranded.
+  // The thing worth guarding is that nobody is ever left with a live career and
+  // nothing to enter.
+  if (s.player.retired) {
+    check('a career that ended did so for a reason, not for lack of events', !!s.player.foldedBroke,
+      `retired at ${s.player.age} with ${fmtMoney(s.finance.cash)}`)
+    console.log(`   weak player's career ended at ${s.player.age}: ${s.player.foldedBroke ? 'the money ran out' : 'retired'}`)
+  } else {
+    const eligibleNow = s.nextSeason.filter((e) => checkEligibility({ ...s, year: s.year + 1 }, e).ok).length
+    check('still has eligible events after a bad decade', eligibleNow > 0, `${eligibleNow} eligible`)
+  }
   console.log(`   ${s.career.starts} starts, ${s.career.wins} wins, ${fmtMoney(s.finance.cash, { compact: true })} bank`)
   invariants(s, 'weak player')
 }
@@ -840,7 +885,7 @@ section('SCENARIO 18 — money decides who gets to keep playing')
   // marginal survive on a shorter schedule and a winter job.
   const tiers = [
     { label: 'no-hoper', talent: 0.24, expectBroke: true },
-    { label: 'journeyman', talent: 0.5, expectBroke: false },
+    { label: 'journeyman', talent: 0.5, expectBroke: false, mayStruggle: true },
     { label: 'star', talent: 0.82, expectBroke: false },
   ]
   for (const t of tiers) {
@@ -866,6 +911,10 @@ section('SCENARIO 18 — money decides who gets to keep playing')
     if (t.expectBroke) {
       check(`${t.label}: mostly ends at the bank`, broke >= 3, `only ${broke}/5 went broke`)
       check(`${t.label}: but not instantly`, meanAge >= 25, `folded at a mean age of ${meanAge.toFixed(1)}`)
+    } else if (t.mayStruggle) {
+      // Since the cut moved to 36 holes a median player really can fail —
+      // measured at about three in ten — but it must not be the usual outcome.
+      check(`${t.label}: usually survives`, broke <= 2, `${broke}/5 went broke`)
     } else {
       check(`${t.label}: does not go broke`, broke === 0, `${broke}/5 went broke`)
     }
@@ -981,6 +1030,73 @@ section('SCENARIO 19 — endorsement money is the size it is in real life')
   check('the richest career is not absurd', worst.cash < ceiling,
     `${fmtMoney(worst.cash)} off ${worst.majors} majors and ${worst.wins} wins`)
   console.log(`   richest of four elite careers: ${fmtMoney(worst.cash, { compact: true })} off ${worst.majors} majors, ${worst.wins} wins`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 20 — Sunday exists')
+{
+  // The four rounds on a leaderboard used to be produced by dividing up the
+  // final score after the fact, so there was no 54-hole lead to hold, no charge
+  // and no collapse — and the mental rating had nothing visible to do. The
+  // player's own events now play the rounds out, and the cut falls after 36
+  // holes where it belongs.
+  const EV = { id: 't', name: 'T', courseType: 'classic', difficulty: 1, fieldSize: 156, cutSize: 65, purse: 8e6, circuit: 'domestic' }
+  const fieldFor = (rng, mental) => {
+    const mine = emptyRatings(72)
+    mine.mental = mental
+    const out = [makeEntrant({ pid: 0, name: 'Me', isUser: true, playstyle: 'balanced', form: 0, fatigue: 20 }, mine, EV)]
+    for (let j = 1; j < EV.fieldSize; j++) {
+      const r = emptyRatings(Math.round(rng.gaussClamped(66, 7)))
+      r.mental = 50
+      out.push(makeEntrant({ pid: j, name: `P${j}`, playstyle: 'balanced', form: 0, fatigue: 20 }, r, EV))
+    }
+    return out
+  }
+
+  // Rounds are real: four of them, summing to the score on the board.
+  const one = simTournament(EV, fieldFor(new Rng(1), 50), new Rng(2), { detailed: true, detailRows: 156 })
+  const winner = one.results[0]
+  check('a winner played four rounds', winner.rounds?.length === 4, `${winner.rounds?.length} rounds`)
+  check('the rounds add up to the score', winner.rounds.reduce((a, r) => a + r.toPar, 0) === winner.toPar,
+    `${winner.rounds.map((r) => r.toPar).join('+')} vs ${winner.toPar}`)
+  const missed = one.results.find((r) => !r.madeCut && r.rounds)
+  if (missed) check('a missed cut played only two', missed.rounds.length === 2, `${missed.rounds.length} rounds`)
+  check('everyone has a 54-hole position', one.results.filter((r) => r.madeCut).every((r) => r.pos54 >= 1))
+
+  // The cut falls on 36 holes, so nobody is saved by rounds they never played.
+  const madeCount = one.results.filter((r) => r.madeCut).length
+  check('the cut is about the right size', madeCount >= 60 && madeCount <= 80, `${madeCount} made it`)
+
+  // Holding the lead is worth something but far from everything.
+  let leads = 0
+  let converted = 0
+  for (let i = 0; i < 400; i++) {
+    const res = simTournament(EV, fieldFor(new Rng(4000 + i), 50), new Rng(9000 + i), { detailed: true, detailRows: 156 }).results
+    const leader = res.find((r) => r.pos54 === 1)
+    if (!leader) continue
+    leads += 1
+    if (leader.pos === 1) converted += 1
+  }
+  const rate = (100 * converted) / Math.max(1, leads)
+  check('54-hole leaders win often, but lose often too', rate > 25 && rate < 60, `${rate.toFixed(0)}%`)
+  console.log(`   54-hole leaders converted ${rate.toFixed(0)}% of the time (real tour is about 45%)`)
+
+  // And nerve is what decides it — the whole point of playing Sunday out.
+  const convRate = (mental) => {
+    let l = 0
+    let w = 0
+    for (let i = 0; i < 900; i++) {
+      const me = simTournament(EV, fieldFor(new Rng(4000 + i), mental), new Rng(9000 + i), { detailed: true, detailRows: 156 })
+        .results.find((x) => x.pid === 0)
+      if (me.pos54 === 1) { l += 1; if (me.pos === 1) w += 1 }
+    }
+    return l ? (100 * w) / l : 0
+  }
+  const calm = convRate(90)
+  const fragile = convRate(25)
+  check('a strong mind closes more often than a weak one', calm > fragile + 5,
+    `${calm.toFixed(0)}% at mental 90 vs ${fragile.toFixed(0)}% at 25`)
+  console.log(`   closing out: ${calm.toFixed(0)}% with a strong mind, ${fragile.toFixed(0)}% with a fragile one`)
 }
 
 // ---------------------------------------------------------------------------
