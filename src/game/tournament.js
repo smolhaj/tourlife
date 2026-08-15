@@ -1,6 +1,16 @@
 import { COURSE_TYPES, CIRCUITS, PAYOUT_PCT, pointsMultiplier, playstyleById } from './constants.js'
 import { courseSkill } from './ratings.js'
 import { clamp } from './rng.js'
+import {
+  NEUTRAL,
+  NORMAL_RAIN,
+  NORMAL_WIND,
+  conditionSigmaMult,
+  conditionStrokes,
+  rainEdgeOf,
+  rollConditions,
+  windEdgeOf,
+} from './weather.js'
 
 /** Strokes gained per point of course-specific rating, over 72 holes. */
 const STROKES_PER_QUALITY = 0.34
@@ -44,7 +54,13 @@ export function makeEntrant(player, ratings, event, extra = {}) {
     quality,
     sigma,
     scrambleEdge: style.scramble,
+    // How this player's game shifts per unit of wind and rain. Held as
+    // coefficients rather than a finished number because the weather is not
+    // known until the tournament is simulated, and it changes by the day.
+    windEdge: windEdgeOf(ratings),
+    rainEdge: rainEdgeOf(ratings),
     ratings,
+    ignorePressure: !!extra.ignorePressure,
   }
 }
 
@@ -52,30 +68,239 @@ export function makeEntrant(player, ratings, event, extra = {}) {
  * Simulate a whole tournament from a list of entrants.
  * Returns finishing positions, to-par scores, prize money and ranking points.
  */
+/**
+ * What being in front on Sunday does to a person.
+ *
+ * The 54-hole leader on tour converts a little under half the time, and it is
+ * not because the field catches fire — it is because leading is harder than
+ * chasing. Leaders lose a fraction of a shot and gain variance; the pack plays
+ * with nothing to lose. Nerve claws most of it back, which is what finally
+ * gives the mental rating and the sports psychologist something visible to do.
+ *
+ * Deliberately close to zero-sum across a field, so playing the rounds out does
+ * not quietly make tournaments easier or harder than the single-roll version.
+ */
+function sundayPressure(pos54, mental) {
+  const nerve = clamp(((mental || 50) - 50) / 50, -1, 1)
+  // Rounds are whole strokes, so an effect worth a third of a shot mostly
+  // disappears into the rounding. This is sized to survive it.
+  const steady = 1 - nerve * 0.85
+  if (pos54 === 1) return { shift: 0.85 * steady, sigmaMult: 1.13 }
+  if (pos54 <= 5) return { shift: 0.5 * steady, sigmaMult: 1.09 }
+  if (pos54 <= 20) return { shift: 0, sigmaMult: 1 }
+  return { shift: -0.12, sigmaMult: 1.07 }
+}
+
+/**
+ * What one day's weather does to one player's score, in strokes.
+ *
+ * Two parts: what the day does to everybody (harder in wind and rain), and what
+ * it does to this player relative to the field (measured against the field's
+ * own average sensitivity, so the weather only ever reshuffles the order — it
+ * never quietly makes the whole field better or worse than it is).
+ */
+function dayShift(e, day, meanEdges) {
+  const rel =
+    (day.wind - NORMAL_WIND) * ((e.windEdge || 0) - meanEdges.wind) +
+    (day.rain - NORMAL_RAIN) * ((e.rainEdge || 0) - meanEdges.rain)
+  return conditionStrokes(day) - (rel * STROKES_PER_QUALITY) / 4
+}
+
+/**
+ * Play the four rounds rather than deriving them from a total. Each round is a
+ * quarter of the player's expected score with a quarter of the variance, so
+ * four of them sum to exactly the distribution the single roll produced — the
+ * only real change is that the last one knows where you stand.
+ */
+function simulateRounds(entrants, { offset, meanQuality, event, rng, cutIndex, noCut, days, meanEdges }) {
+  const field = entrants.map((e) => {
+    const skillStrokes = -(e.quality - meanQuality) * STROKES_PER_QUALITY
+    const scramble = -e.scrambleEdge * 1.6
+    return {
+      entrant: e,
+      mean: (offset + skillStrokes + scramble) / 4,
+      // Four independent rounds of sigma/2 sum to one round of sigma, so the
+      // 72-hole distribution is identical to the single-roll version.
+      sd: e.sigma / 2,
+      rounds: [],
+    }
+  })
+
+  // Whole strokes, because that is what a round of golf is. Rounding at the
+  // point of generation rather than for display is what makes the four numbers
+  // on the leaderboard actually add up to the score beside them.
+  const roll = (r, day, sdMult = 1, shift = 0) =>
+    Math.round(
+      r.mean +
+        dayShift(r.entrant, day, meanEdges) +
+        shift +
+        rng.gaussClamped(0, r.sd * sdMult * conditionSigmaMult(day), 3.1),
+    )
+
+  // Thursday and Friday.
+  for (const r of field) {
+    r.rounds.push(roll(r, days[0]), roll(r, days[1]))
+    r.through36 = r.rounds[0] + r.rounds[1]
+  }
+
+  // The cut falls here, on 36 holes, which is where it falls in life. Everyone
+  // below it goes home having played two rounds — and, usefully, does not have
+  // to be simulated over the weekend at all.
+  const byHalfway = [...field].sort((a, b) => a.through36 - b.through36)
+  const survivors = noCut ? byHalfway : byHalfway.slice(0, cutIndex)
+  const goneHome = noCut ? [] : byHalfway.slice(cutIndex)
+  // Anybody level with the last man in plays on — that is what the number
+  // means. Capped, though: 36-hole scores bunch tightly, so an unbounded tie
+  // could carry twenty extra players past the cut and out beyond the end of the
+  // payout table, where they would "make the cut" and be paid nothing.
+  if (!noCut && goneHome.length && survivors.length) {
+    const line = Math.round(survivors[survivors.length - 1].through36)
+    const ceiling = Math.min(cutIndex + 10, PAYOUT_PCT.length)
+    while (goneHome.length && survivors.length < ceiling && Math.round(goneHome[0].through36) === line) {
+      survivors.push(goneHome.shift())
+    }
+  }
+
+  // Saturday sets up Sunday.
+  for (const r of survivors) {
+    r.rounds.push(roll(r, days[2]))
+    r.through54 = r.through36 + r.rounds[2]
+  }
+  ;[...survivors]
+    .sort((a, b) => a.through54 - b.through54)
+    .forEach((r, i) => {
+      r.pos54 = i + 1
+    })
+
+  // Sunday, with the leaderboard in your pocket.
+  for (const r of survivors) {
+    const p = r.entrant.ignorePressure ? { shift: 0, sigmaMult: 1 } : sundayPressure(r.pos54, r.entrant.ratings?.mental)
+    r.rounds.push(roll(r, days[3], p.sigmaMult, p.shift))
+    r.raw = r.through54 + r.rounds[3]
+  }
+  for (const r of goneHome) r.raw = r.through36
+
+  const shape = (r, missed) => ({
+    entrant: r.entrant,
+    raw: r.raw,
+    missedCut: missed,
+    playedRounds: r.rounds,
+    through36: r.through36,
+    through54: r.through54,
+    pos54: r.pos54,
+  })
+  return {
+    survivors: survivors.sort((a, b) => a.raw - b.raw).map((r) => shape(r, false)),
+    goneHome: goneHome.sort((a, b) => a.raw - b.raw).map((r) => shape(r, true)),
+  }
+}
+
 export function simTournament(event, entrants, rng, opts = {}) {
   const circuit = CIRCUITS[event.circuit]
   const offset = scoringOffset(event.difficulty)
   const n = entrants.length
   let meanQuality = 0
-  for (const e of entrants) meanQuality += e.quality
-  meanQuality /= Math.max(1, n)
+  let meanWindEdge = 0
+  let meanRainEdge = 0
+  for (const e of entrants) {
+    meanQuality += e.quality
+    meanWindEdge += e.windEdge || 0
+    meanRainEdge += e.rainEdge || 0
+  }
+  const denom = Math.max(1, n)
+  meanQuality /= denom
+  const meanEdges = { wind: meanWindEdge / denom, rain: meanRainEdge / denom }
 
-  const rows = entrants.map((e) => {
-    const skillStrokes = -(e.quality - meanQuality) * STROKES_PER_QUALITY
-    const luck = rng.gaussClamped(0, e.sigma, 3.1)
-    // A short-game-driven scramble nudge: conservative players save more pars.
-    const scramble = -e.scrambleEdge * 1.6
-    const toPar = offset + skillStrokes + luck + scramble
-    return { entrant: e, raw: toPar }
-  })
+  // Nobody knows the weather until the week arrives, so it is rolled here
+  // rather than carried on the schedule. A caller may supply it — the balance
+  // harness pins it flat to measure everything else.
+  const conditions = opts.conditions || event.conditions || rollConditions(rng, event.courseType)
+  const days = conditions.rounds && conditions.rounds.length === 4 ? conditions.rounds : [NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL]
 
-  rows.sort((a, b) => a.raw - b.raw)
+  // Round-by-round only where somebody will see it. Playing the four rounds out
+  // costs about four times a single roll, and 178 events run every season — so
+  // the player's own tournaments get the real thing and the rest of the world
+  // keeps the cheap one. Nothing downstream can tell the difference except that
+  // Sunday exists.
+  const playRounds = !!opts.detailed
+
+  const nominalCut = event.cutSize >= event.fieldSize ? entrants.length : Math.min(event.cutSize, entrants.length)
+  const noCutHere = circuit.cutSize >= circuit.fieldSize || event.circuit === 'senior'
+
+  let rows
+  let playedCutIndex = null
+  if (playRounds) {
+    const played = simulateRounds(entrants, {
+      offset,
+      meanQuality,
+      event,
+      rng,
+      cutIndex: nominalCut,
+      noCut: noCutHere,
+      days,
+      meanEdges,
+    })
+    // Weekend players are ranked on 72 holes; everyone who went home on Friday
+    // sits below them, in order of the 36 they did play.
+    rows = [...played.survivors, ...played.goneHome]
+    playedCutIndex = played.survivors.length
+  } else {
+    // The cheap path still has to cut where the real one does, or the player's
+    // own events would judge them over 36 holes while the rest of the world was
+    // judged over 72 — a materially easier standard, and their cut record would
+    // read worse than an identical AI's for no reason. Two halves rather than
+    // four rounds: same total distribution, one extra draw, and the weekend is
+    // only simulated for players still in it.
+    // Two days of weather per half, so the world's tournaments feel the same
+    // wind the player's do. Variances add, which is why the half's spread is
+    // the root of the sum of the two days rather than their average.
+    const halfSd = (e, a, b) => {
+      const ma = conditionSigmaMult(a)
+      const mb = conditionSigmaMult(b)
+      return (e.sigma / 2) * Math.sqrt(ma * ma + mb * mb)
+    }
+    const halfShift = (e, a, b) => dayShift(e, a, meanEdges) + dayShift(e, b, meanEdges)
+    const half = entrants.map((e) => {
+      const skillStrokes = -(e.quality - meanQuality) * STROKES_PER_QUALITY
+      const scramble = -e.scrambleEdge * 1.6
+      const base = (offset + skillStrokes + scramble) / 2
+      const firstMean = base + halfShift(e, days[0], days[1])
+      const firstSd = halfSd(e, days[0], days[1])
+      return {
+        entrant: e,
+        // `mean`/`sd` are the weekend's; the weekend is rolled later, only for
+        // whoever is still here.
+        mean: base + halfShift(e, days[2], days[3]),
+        sd: halfSd(e, days[2], days[3]),
+        through36: firstMean + rng.gaussClamped(0, firstSd, 3.1),
+      }
+    })
+    half.sort((a, b) => a.through36 - b.through36)
+    const survivors = noCutHere ? half : half.slice(0, nominalCut)
+    const goneHome = noCutHere ? [] : half.slice(nominalCut)
+    if (!noCutHere && goneHome.length && survivors.length) {
+      const line = Math.round(survivors[survivors.length - 1].through36)
+      const ceiling = Math.min(nominalCut + 10, PAYOUT_PCT.length)
+      while (goneHome.length && survivors.length < ceiling && Math.round(goneHome[0].through36) === line) {
+        survivors.push(goneHome.shift())
+      }
+    }
+    for (const r of survivors) r.raw = r.through36 + r.mean + rng.gaussClamped(0, r.sd, 3.1)
+    for (const r of goneHome) r.raw = r.through36
+    survivors.sort((a, b) => a.raw - b.raw)
+    goneHome.sort((a, b) => a.raw - b.raw)
+    rows = [
+      ...survivors.map((r) => ({ entrant: r.entrant, raw: r.raw, missedCut: false, through36: r.through36 })),
+      ...goneHome.map((r) => ({ entrant: r.entrant, raw: r.raw, missedCut: true, through36: r.through36 })),
+    ]
+    playedCutIndex = survivors.length
+  }
 
   // A tie for the lead goes to a playoff. Without this every player level at
   // the top was credited with the win — which happened in a fifth of all
   // events — and "won it in a playoff" could never actually occur.
   let playoffSize = 0
-  if (rows.length > 1 && Math.round(rows[0].raw) === Math.round(rows[1].raw)) {
+  if (rows.length > 1 && !rows[0].missedCut && !rows[1].missedCut && Math.round(rows[0].raw) === Math.round(rows[1].raw)) {
     let last = 1
     while (last + 1 < rows.length && Math.round(rows[last + 1].raw) === Math.round(rows[0].raw)) last++
     playoffSize = last + 1
@@ -93,10 +318,20 @@ export function simTournament(event, entrants, rng, opts = {}) {
   // Round scores are only needed for leaderboards we actually show.
   const detailCount = opts.detailed ? Math.min(rows.length, opts.detailRows || 25) : 0
 
-  const cutSize = event.cutSize >= event.fieldSize ? rows.length : Math.min(event.cutSize, rows.length)
-  const noCut = circuit.cutSize >= circuit.fieldSize || event.circuit === 'senior'
-  const cutIndex = noCut ? rows.length : cutSize
-  const cutLine = cutIndex < rows.length ? Math.round(rows[cutIndex - 1].raw) : null
+  const noCut = noCutHere
+  // When the rounds were played the cut already happened, on Friday, on 36
+  // holes — so take the answer rather than recomputing it against 72-hole
+  // totals, which would let somebody who was cut be "saved" by two rounds they
+  // never played.
+  const cutIndex = playedCutIndex !== null ? playedCutIndex : noCut ? rows.length : nominalCut
+  const cutLine =
+    playedCutIndex !== null
+      ? playedCutIndex < rows.length
+        ? Math.round(rows[playedCutIndex - 1].through36)
+        : null
+      : cutIndex < rows.length
+        ? Math.round(rows[cutIndex - 1].raw)
+        : null
 
   // Assign positions with shared places on ties.
   const results = []
@@ -105,14 +340,18 @@ export function simTournament(event, entrants, rng, opts = {}) {
   while (i < rows.length) {
     const scoreInt = Math.round(rows[i].raw)
     let j = i
-    while (j + 1 < rows.length && Math.round(rows[j + 1].raw) === scoreInt) j++
+    while (
+      j + 1 < rows.length &&
+      Math.round(rows[j + 1].raw) === scoreInt &&
+      !!rows[j + 1].missedCut === !!rows[i].missedCut
+    ) j++
     // The playoff winner stands alone at the top; everyone they beat there
     // shares second on the same score.
     if (i === 0 && playoffSize > 1) j = 0
     const groupSize = j - i + 1
     const tied = groupSize > 1
     for (let k = i; k <= j; k++) {
-      const madeCut = noCut || k < cutIndex || (tied && i < cutIndex)
+      const madeCut = rows[k].missedCut !== undefined ? !rows[k].missedCut : noCut || k < cutIndex || (tied && i < cutIndex)
       results.push({
         pid: rows[k].entrant.pid,
         name: rows[k].entrant.name,
@@ -124,6 +363,10 @@ export function simTournament(event, entrants, rng, opts = {}) {
         madeCut,
         money: 0,
         points: 0,
+        // Only present when the rounds were actually played.
+        pos54: rows[k].pos54,
+        through54: rows[k].through54 !== undefined ? Math.round(rows[k].through54) : undefined,
+        playedRounds: rows[k].playedRounds,
       })
     }
     i = j + 1
@@ -173,8 +416,15 @@ export function simTournament(event, entrants, rng, opts = {}) {
   }
 
   if (detailCount > 0) {
+    const par = event.difficulty > 1.25 ? 70 : 71
     for (let k = 0; k < results.length; k++) {
-      if (k < detailCount || results[k].isUser) {
+      if (k >= detailCount && !results[k].isUser) continue
+      const played = results[k].playedRounds
+      if (played) {
+        // Rounds that were actually played. A missed cut only played two.
+        const keep = results[k].madeCut ? played : played.slice(0, 2)
+        results[k].rounds = keep.map((v) => ({ toPar: v, strokes: par + v }))
+      } else {
         results[k].rounds = splitRounds(results[k].toPar, results[k].madeCut, rng, event)
       }
     }
@@ -187,6 +437,7 @@ export function simTournament(event, entrants, rng, opts = {}) {
     results,
     winner: winner ? { pid: winner.pid, name: winner.name, toPar: winner.toPar, flag: winner.flag } : null,
     cutLine,
+    conditions: { wind: conditions.wind, rain: conditions.rain },
     fieldSize: rows.length,
     meanQuality,
     strengthMult,

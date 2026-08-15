@@ -2,6 +2,8 @@ import React from 'react'
 import { COURSE_TYPES } from '../game/constants.js'
 import { fmtMoney, splitPrize } from '../game/finance.js'
 import { agentCut } from '../game/staff.js'
+import { conditionsLabel } from '../game/weather.js'
+import { familiarityLabel, venueStartsOf, venueWinsOf } from '../game/venue.js'
 import { Modal, Chip, CircuitChip, ToPar, Money, Empty, posLabel } from './ui.jsx'
 
 /** Leaderboard for one tournament the player entered. */
@@ -43,8 +45,13 @@ export default function ResultModal({ state, eventId, onClose }) {
         <div className="pill-row">
           <CircuitChip id={summary.circuit} />
           {summary.isMajor ? <Chip tone="orange">MAJOR</Chip> : null}
-          {event ? <Chip>{event.venue}</Chip> : null}
+          {event ? (
+            <Chip title={familiarityLabel(venueStartsOf(state.career, event.venue), venueWinsOf(state.career, event.venue))}>
+              {event.venue}
+            </Chip>
+          ) : null}
           {event ? <Chip>{COURSE_TYPES[event.courseType].name}</Chip> : null}
+          {summary.conditions ? <Chip>{conditionsLabel(summary.conditions)}</Chip> : null}
           {summary.cutLine !== null && summary.cutLine !== undefined ? (
             <Chip>Cut at {summary.cutLine > 0 ? `+${summary.cutLine}` : summary.cutLine}</Chip>
           ) : null}

@@ -42,6 +42,10 @@ export function legacyScore(career, player) {
     (career.weeksAtNo1 || 0) * 0.16 +
     (career.seasonsTop10 || 0) * 2.4 +
     (career.careerEarnings || 0) / 12_000_000 +
+    // Caps are part of a career even though they pay nothing — worth less than
+    // a win apiece, and never enough on their own to carry a mediocre one.
+    (career.teamCaps || 0) * 0.9 +
+    (career.teamCupWins || 0) * 0.7 +
     Math.max(0, (player?.peakOvr || 0) - 62) * 1.1
   return Math.round(s * 10) / 10
 }

@@ -3,7 +3,7 @@ import { ATTRS, PLAYSTYLES, COURSE_TYPES } from '../game/constants.js'
 import { tourAverages } from '../game/engine.js'
 import { overallLabel, overall, CURVES, courseFit } from '../game/ratings.js'
 import { careerPhase, majorNarrative, legacyScore, legacyLabel } from '../game/narrative.js'
-import { equipmentBonus, bagTech, techBaseline } from '../game/equipment.js'
+import { equipmentBonus, bagTech, techBaseline, startsToSettle } from '../game/equipment.js'
 import { describeStaff } from '../game/staff.js'
 import { STAFF_ROLES, EQUIP_SLOTS } from '../game/constants.js'
 import { fmtMoney } from '../game/finance.js'
@@ -12,7 +12,7 @@ import { Card, RatingRow, Chip, Stat, StatGrid, Empty, Sparkline } from './ui.js
 export default function PlayerView({ state }) {
   const p = state.player
   const avg = tourAverages(state)
-  const gear = equipmentBonus(state.bag, state.yearsElapsed)
+  const gear = equipmentBonus(state.bag, state.yearsElapsed, state.career.starts)
   const style = PLAYSTYLES.find((s) => s.id === p.playstyle)
   const legacy = legacyScore(state.career, p)
   const seasons = state.career.seasons
@@ -170,6 +170,13 @@ export default function PlayerView({ state }) {
                       {item?.sponsored ? <span className="gold xs"> (sponsor)</span> : null}
                     </td>
                     <td className="num xs mono">{item ? item.tech.toFixed(1) : '—'}</td>
+                    <td className="num xs">
+                      {startsToSettle(item, slot.id, state.career.starts) > 0 ? (
+                        <span className="orange">
+                          bedding in · {startsToSettle(item, slot.id, state.career.starts)}
+                        </span>
+                      ) : null}
+                    </td>
                   </tr>
                 )
               })}
