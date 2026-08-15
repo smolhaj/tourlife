@@ -1,4 +1,5 @@
 import { clamp } from './rng.js'
+import { PLAYING_WEEKS } from './schedule.js'
 
 /**
  * Weather.
@@ -44,14 +45,35 @@ const CLIMATE = {
 export const NEUTRAL = { wind: NORMAL_WIND, rain: NORMAL_RAIN }
 
 /**
+ * Where in the year a week falls, -1 at the two ends of the calendar and +1 at
+ * the height of summer. Weather was previously identical in week five and week
+ * thirty, which made the season a flat run of interchangeable weeks — but the
+ * shape of a golf calendar is precisely that it starts cold and wet, dries out
+ * and firms up through the middle, and blows itself out in the autumn.
+ *
+ * A full cosine period, so the average across a season is exactly zero and the
+ * scoring calibration that NORMAL_WIND and NORMAL_RAIN rest on is untouched.
+ * Northern-hemisphere, like the bulk of the schedule.
+ */
+export function seasonPhase(week) {
+  if (!week) return 0
+  const t = (week - 1) / Math.max(1, PLAYING_WEEKS - 1)
+  return Math.cos((t - 0.55) * 2 * Math.PI)
+}
+
+const SUMMER_WIND = 0.07
+const SUMMER_RAIN = 0.1
+
+/**
  * Roll a week's weather: a base for the tournament, then a day for each round.
  * Days vary around the week, which is what lets a Saturday gale rearrange a
  * leaderboard that Thursday's calm had settled.
  */
-export function rollConditions(rng, courseType) {
+export function rollConditions(rng, courseType, week = null) {
   const c = CLIMATE[courseType] || { wind: NORMAL_WIND, rain: NORMAL_RAIN }
-  const wBase = clamp(rng.gauss(c.wind, 0.15), 0.02, 1)
-  const rBase = clamp(rng.gauss(c.rain, 0.16), 0, 1)
+  const summer = seasonPhase(week)
+  const wBase = clamp(rng.gauss(c.wind - summer * SUMMER_WIND, 0.15), 0.02, 1)
+  const rBase = clamp(rng.gauss(c.rain - summer * SUMMER_RAIN, 0.16), 0, 1)
   const rounds = []
   for (let i = 0; i < 4; i++) {
     rounds.push({

@@ -14,7 +14,7 @@ import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney, debtInterest, backerOffer, splitPrize } from '../src/game/finance.js'
 import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
 import { Rng, clamp } from '../src/game/rng.js'
-import { conditionsLabel, rollConditions, NORMAL_WIND } from '../src/game/weather.js'
+import { conditionsLabel, rollConditions, seasonPhase, NORMAL_WIND } from '../src/game/weather.js'
 import { venueEdge, familiarityLabel } from '../src/game/venue.js'
 import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
 import { CUPS, CUP_WEEK, cupForYear, recordText, selectTeam, simCup } from '../src/game/teamcup.js'
@@ -1683,6 +1683,70 @@ section('SCENARIO 27 — the flight in')
   check('a globetrotting season is flagged before you commit to it', plan(globeTrot).length > 0,
     `${plan(globeTrot).length} flagged`)
   console.log(`   a home schedule flags ${plan(homeOnly).length} long-haul weeks; hopping continents flags ${plan(globeTrot).length}`)
+}
+
+section('SCENARIO 28 — the calendar has seasons')
+{
+  // Week five and week thirty used to share a climate, which made the season a
+  // flat run of interchangeable weeks.
+  check('midsummer is the height of the year', seasonPhase(24) > 0.9, `${seasonPhase(24).toFixed(2)}`)
+  check('the two ends of the calendar are the depths',
+    seasonPhase(1) < -0.85 && seasonPhase(44) < -0.85, `${seasonPhase(1).toFixed(2)} / ${seasonPhase(44).toFixed(2)}`)
+  // A full period, so the season average is the calibrated normal week.
+  let phaseSum = 0
+  for (let w = 1; w <= 44; w++) phaseSum += seasonPhase(w)
+  check('the season averages out to a normal year', Math.abs(phaseSum / 44) < 0.05, `${(phaseSum / 44).toFixed(3)}`)
+
+  const meanFor = (week, type = 'classic') => {
+    const rng = new Rng(2200)
+    let w = 0
+    let r = 0
+    const N = 2500
+    for (let i = 0; i < N; i++) {
+      const c = rollConditions(rng, type, week)
+      w += c.wind
+      r += c.rain
+    }
+    return { wind: w / N, rain: r / N }
+  }
+  const spring = meanFor(3)
+  const summer = meanFor(24)
+  const autumn = meanFor(42)
+  check('summer is drier than spring', summer.rain < spring.rain - 0.08,
+    `${summer.rain.toFixed(3)} vs ${spring.rain.toFixed(3)}`)
+  check('summer is calmer than autumn', summer.wind < autumn.wind - 0.05,
+    `${summer.wind.toFixed(3)} vs ${autumn.wind.toFixed(3)}`)
+  check('both ends of the year are alike', Math.abs(spring.wind - autumn.wind) < 0.05,
+    `${spring.wind.toFixed(3)} vs ${autumn.wind.toFixed(3)}`)
+  console.log(`   wind: ${spring.wind.toFixed(2)} in spring, ${summer.wind.toFixed(2)} midsummer, ${autumn.wind.toFixed(2)} in autumn`)
+  console.log(`   rain: ${spring.rain.toFixed(2)} in spring, ${summer.rain.toFixed(2)} midsummer, ${autumn.rain.toFixed(2)} in autumn`)
+
+  // Which has to reach the scorecard: midsummer plays easier than March.
+  const EVW = { id: 'sw', name: 'SW', courseType: 'classic', difficulty: 1, fieldSize: 144, cutSize: 65, purse: 8e6, circuit: 'domestic' }
+  const winnerAt = (week) => {
+    const rng = new Rng(9100)
+    let total = 0
+    const N = 260
+    for (let i = 0; i < N; i++) {
+      const field = []
+      for (let j = 0; j < EVW.fieldSize; j++) {
+        const r = emptyRatings(Math.round(rng.gaussClamped(64, 8)))
+        field.push(makeEntrant({ pid: j, name: `P${j}`, playstyle: 'balanced', form: 0, fatigue: 0 }, r, EVW))
+      }
+      total += simTournament({ ...EVW, week }, field, rng).winner.toPar
+    }
+    return total / N
+  }
+  const march = winnerAt(3)
+  const july = winnerAt(24)
+  check('midsummer scores better than early spring', july < march - 0.8,
+    `${july.toFixed(1)} in week 24 vs ${march.toFixed(1)} in week 3`)
+  console.log(`   average winning score: ${march.toFixed(1)} in week 3, ${july.toFixed(1)} in week 24`)
+
+  // The archetype still dominates: a links in July is windier than a resort in March.
+  check('where you are still matters more than when',
+    meanFor(24, 'links').wind > meanFor(3, 'resort').wind,
+    `${meanFor(24, 'links').wind.toFixed(2)} vs ${meanFor(3, 'resort').wind.toFixed(2)}`)
 }
 
 // ---------------------------------------------------------------------------

@@ -214,7 +214,7 @@ export function simTournament(event, entrants, rng, opts = {}) {
   // Nobody knows the weather until the week arrives, so it is rolled here
   // rather than carried on the schedule. A caller may supply it — the balance
   // harness pins it flat to measure everything else.
-  const conditions = opts.conditions || event.conditions || rollConditions(rng, event.courseType)
+  const conditions = opts.conditions || event.conditions || rollConditions(rng, event.courseType, event.week)
   const days = conditions.rounds && conditions.rounds.length === 4 ? conditions.rounds : [NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL]
 
   // Round-by-round only where somebody will see it. Playing the four rounds out
