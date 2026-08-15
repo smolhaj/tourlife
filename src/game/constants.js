@@ -6,6 +6,14 @@ export const SETTINGS_KEY = 'tourlife.settings.v1'
 
 export const WEEKS_PER_YEAR = 48 // 44 playing weeks + a 4-week offseason block
 
+/**
+ * Lives here rather than in schedule.js because both the schedule and the
+ * season race need it, and the race is a fixture on the schedule — putting it
+ * in either module makes the two import each other.
+ */
+export const PLAYING_WEEKS = 44
+export const OFFSEASON_WEEK = PLAYING_WEEKS + 1 // weeks 45..48 are the offseason
+
 // ---------------------------------------------------------------- attributes
 
 export const ATTRS = [

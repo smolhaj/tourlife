@@ -33,6 +33,7 @@ import {
 } from './world.js'
 import { makeEntrant, simTournament } from './tournament.js'
 import { prepEdgeFor, venueEdgeFor } from './venue.js'
+import { FINALE_FIELD, FINALE_ID, bonusFor, racePosition, raceStandings, raceTitle } from './race.js'
 import {
   CUP_WEEK,
   cupForYear,
@@ -103,6 +104,7 @@ import {
   cardStatus,
   Q_SCHOOL_FEE,
   EMERGING_ENTRY_FEE,
+  grantCard,
 } from './eligibility.js'
 
 const AI_SUPPORT_BONUS = 1.15
@@ -212,6 +214,10 @@ export function newGame(opts = {}) {
       careerGross: 0,
       endorsementTotal: 0,
       appearanceTotal: 0,
+      raceWins: 0,
+      raceBest: null,
+      raceBonusTotal: 0,
+      raceHistory: [],
       bestRank: null,
       weeksAtNo1: 0,
       weeksTop10: 0,
@@ -531,6 +537,19 @@ const THIN_AFFINITY = 0.2
  * in are trimmed — nobody sees them, and it keeps 30-year skips fast.
  */
 function selectField(state, event, rng, includeUser, cache) {
+  // The finale has no field selection to do — the standings decided it in
+  // August. Whoever is in the top forty is in, and nobody else is.
+  if (event.finale) {
+    const byId = new Map(state.world.players.map((p) => [p.pid, p]))
+    const field = []
+    for (const row of raceStandings(state, FINALE_FIELD)) {
+      if (row.isUser) continue
+      const p = byId.get(row.pid)
+      if (p && !p.retired && !(p.injury && p.injury.out)) field.push(p)
+    }
+    return includeUser ? field.slice(0, event.fieldSize - 1) : field
+  }
+
   const size = includeUser
     ? event.fieldSize
     : Math.min(event.fieldSize, event.isMajor ? 96 : 64)
@@ -592,6 +611,24 @@ function selectField(state, event, rng, includeUser, cache) {
    * winner's cheque. Ask the tired ones rather than stage that.
    */
   if (need > 0 && spent.length) draft(spent, need)
+
+  /**
+   * And a last resort under that, because the draft above still filters on
+   * affinity — so a thin roster whose members have little pull towards this
+   * particular event could still produce a seventeen-man "tournament". Below
+   * the floor, everybody eligible turns up. This is the guard the empty
+   * senior fields kept slipping past whenever the random stream shifted, and
+   * making it structural is cheaper than re-tuning the pool every time.
+   */
+  const floor = Math.min(size, 24)
+  if (chosen.length < floor) {
+    for (const p of pool) {
+      if (chosen.length >= floor) break
+      if (used.has(p.pid)) continue
+      chosen.push(p)
+      used.add(p.pid)
+    }
+  }
 
   return chosen
 }
@@ -1326,6 +1363,27 @@ export function advanceOneWeek(state, rng) {
     userEvent = null
   }
 
+  // Nobody enters a season finale. You are in it or you are not, and it is
+  // decided by a table you have been climbing since February — so it cannot go
+  // through the schedule builder, which runs in an offseason when you have no
+  // points at all and would never let you pick it.
+  const finale = state.season.find((e) => e.id === FINALE_ID && e.week === week)
+  if (finale && !state.entered[finale.id] && checkEligibility(state, finale).ok) {
+    for (const id of Object.keys(state.entered)) {
+      const other = state.season.find((e) => e.id === id)
+      if (other && other.week === week) delete state.entered[id]
+    }
+    state.entered[finale.id] = true
+    userEvent = finale
+    pushLog(state, {
+      week,
+      year: state.year,
+      kind: 'info',
+      text: `You made the ${finale.name}.`,
+      detail: `${racePosition(state).pos} in the race with a week to play.`,
+    })
+  }
+
   // Cup week. If you are on the team you are not playing anywhere else, which
   // is true of the real thing too — the week is cleared for it.
   const cup = week === CUP_WEEK ? runTeamCup(state, rng) : null
@@ -1433,6 +1491,38 @@ function fmtToPar(v) {
 function endSeason(state, rng) {
   const p = state.player
   const st = state.seasonTotals
+
+  // Where the year finished. Taken before anything resets, because the final
+  // standings are the season's actual result — the thing every week has been
+  // adding up to.
+  const finalRace = racePosition(state)
+  if (finalRace) {
+    state.career.raceBest = Math.min(state.career.raceBest || 999, finalRace.pos)
+    const bonus = bonusFor(finalRace.pos, inflation(state.yearsElapsed))
+    if (bonus > 0) {
+      const paid = netAppearance(bonus, agentCut(state.staff))
+      state.finance.cash += paid.net
+      state.career.raceBonusTotal = (state.career.raceBonusTotal || 0) + paid.net
+      pushNews(state, `${fmtMoney(bonus)} from the bonus pool for finishing ${finalRace.pos} in the race.`, 'money')
+    }
+    if (finalRace.pos === 1) {
+      state.career.raceWins = (state.career.raceWins || 0) + 1
+      // Topping the standings is worth a place on tour for years, which is
+      // what makes the race worth chasing rather than just worth watching.
+      grantCard(state, 'domestic', 'full', 3)
+      state.majorExemptUntil = Math.max(state.majorExemptUntil, state.year + 2)
+      addHighlight(state, 'race', {
+        title: `Number one for ${state.year}`,
+        text: `Top of the ${raceTitle(state.year)} on ${Math.round(finalRace.points)} points. Nobody had a better year.`,
+        importance: 4,
+      })
+    } else if (finalRace.pos <= 5) {
+      pushNews(state, `Finished ${finalRace.pos} in the ${raceTitle(state.year)}.`, 'good')
+    }
+    state.career.raceHistory = state.career.raceHistory || []
+    state.career.raceHistory.push({ year: state.year, pos: finalRace.pos, points: Math.round(finalRace.points) })
+    if (state.career.raceHistory.length > 45) state.career.raceHistory.shift()
+  }
 
   // Money in, money out.
   const endorseGross = sponsorIncome(state.sponsors.deals)

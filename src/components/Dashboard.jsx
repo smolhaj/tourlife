@@ -8,6 +8,7 @@ import { recoveryNote } from '../game/injuries.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
 import { familiarityLabel, prepEdgeFor, venueEdgeFor, venueStartsOf, venueWinsOf } from '../game/venue.js'
 import { CUP_WEEK, cupForYear, eligibleTeamFor } from '../game/teamcup.js'
+import { FINALE_FIELD, racePosition, raceTitle } from '../game/race.js'
 import { Card, Stat, StatGrid, Chip, CircuitChip, Money, ToPar, posLabel, Empty, ProgressBar } from './ui.jsx'
 
 export default function Dashboard({ state, onOpenResult, onGoTab, onPrepare }) {
@@ -36,6 +37,7 @@ export default function Dashboard({ state, onOpenResult, onGoTab, onPrepare }) {
             <Stat k="Prize (net)" v={fmtMoney(state.finance.seasonPrizeNet, { compact: true })} s={`${fmtMoney(summary.prizeGross, { compact: true })} gross`} />
             <Stat k="Best finish" v={summary.bestFinish ? `${summary.bestFinish}` : '—'} />
           </StatGrid>
+          <RaceLine state={state} />
         </Card>
 
         <Card title="Recent results" aux={state.seasonLog.length ? `${plural(state.seasonLog.length, 'start')} this season` : null}>
@@ -237,6 +239,33 @@ function Gauge({ label, value, display, tone, invert }) {
       </div>
       <div className="meter" style={{ height: 7 }}>
         <div className="fill" style={{ width: `${pct}%`, background: invert && pct > 65 ? 'var(--red)' : tone }} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Where you are in the season race, and what it would take to reach the
+ * finale. The whole point of a standings table is that you can see it from
+ * anywhere in the year, including from a hundred and eighteenth.
+ */
+function RaceLine({ state }) {
+  const race = racePosition(state)
+  if (!race) return null
+  const pct = Math.min(1, race.points / Math.max(1, race.cutoffPoints || race.points))
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="row between xs muted">
+        <span>
+          {raceTitle(state.year)} — <b className={race.inFinale ? 'gold' : ''}>{race.pos}</b> of {race.total}
+        </span>
+        <span className="mono">{Math.round(race.points)} pts</span>
+      </div>
+      <ProgressBar value={race.points} max={Math.max(race.points, race.cutoffPoints || 1)} />
+      <div className="xs muted-2" style={{ marginTop: 4 }}>
+        {race.inFinale
+          ? `Inside the top ${FINALE_FIELD} — you are in the Tour Championship as things stand.`
+          : `${Math.round(race.pointsShort)} points short of the top ${FINALE_FIELD} and the finale.`}
       </div>
     </div>
   )

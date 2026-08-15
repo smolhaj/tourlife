@@ -10,6 +10,12 @@ export const POOL_TARGET = {
   asian: 105,
   emerging: 140,
   amateur: 100, // mini-tour and regional players; the pond you start in
+  // The Senior Circuit was never given a population of its own — it was
+  // entirely whoever happened to survive to fifty out of the aging tail of
+  // everyone else, which came to about twenty-five players for a tour that
+  // advertises seventy-eight-man fields. Some worlds produced twenty, and then
+  // events were run with seventeen people in them.
+  senior: 95,
 }
 
 export const RANK_DECAY = 0.9885 // weekly; ~60-week half life
@@ -80,12 +86,16 @@ export function createWorld(rng, year) {
     { circuit: 'asian', count: POOL_TARGET.asian, talent: [0.38, 0.14] },
     { circuit: 'emerging', count: POOL_TARGET.emerging, talent: [0.3, 0.13] },
     { circuit: 'amateur', count: POOL_TARGET.amateur, talent: [0.2, 0.11] },
+    { circuit: 'senior', count: POOL_TARGET.senior, talent: [0.44, 0.14] },
   ]
   for (const grp of spread) {
     for (let i = 0; i < grp.count; i++) {
-      const age = grp.circuit === 'amateur'
-        ? clamp(Math.round(rng.gauss(24, 3.5)), 18, 34)
-        : clamp(Math.round(rng.gauss(32, 8.5)), 20, 58)
+      const age =
+        grp.circuit === 'amateur'
+          ? clamp(Math.round(rng.gauss(24, 3.5)), 18, 34)
+          : grp.circuit === 'senior'
+            ? clamp(Math.round(rng.gauss(56, 4.5)), SENIOR_AGE, 68)
+            : clamp(Math.round(rng.gauss(32, 8.5)), 20, 52)
       const talent = clamp(rng.gauss(grp.talent[0], grp.talent[1]), 0.03, 0.99)
       const p = makeAiPlayer(rng, { age, talent, homeCircuit: grp.circuit, taken, year })
       // Seed a plausible career already in progress.
@@ -328,7 +338,11 @@ export function progressWorld(world, rng, year) {
   for (const p of world.players) {
     if (p.retired || p.isUser) continue
     const ovr = overall(p.ratings)
-    if (p.homeCircuit === 'amateur' && ovr > 50) p.homeCircuit = 'emerging'
+    // Fifty is a change of tour. Doing it here rather than leaving them on a
+    // circuit they can no longer enter is what keeps the senior roster in the
+    // overflow bookkeeping below, so it holds its size like every other pool.
+    if (p.age >= SENIOR_AGE) p.homeCircuit = 'senior'
+    else if (p.homeCircuit === 'amateur' && ovr > 50) p.homeCircuit = 'emerging'
     else if (p.homeCircuit === 'emerging' && ovr > 62) p.homeCircuit = rng.chance(0.6) ? 'domestic' : 'intl'
     else if (p.homeCircuit === 'asian' && ovr > 68) p.homeCircuit = 'intl'
     else if (p.homeCircuit === 'intl' && ovr > 72 && rng.chance(0.35)) p.homeCircuit = 'domestic'

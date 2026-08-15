@@ -1,7 +1,9 @@
-import { CIRCUITS, COURSE_TYPE_KEYS, TRAVEL_ZONE } from './constants.js'
+import { CIRCUITS, COURSE_TYPE_KEYS, TRAVEL_ZONE, PLAYING_WEEKS, OFFSEASON_WEEK } from './constants.js'
+import { FINALE_FIELD, FINALE_ID, FINALE_WEEK } from './race.js'
 
-export const PLAYING_WEEKS = 44
-export const OFFSEASON_WEEK = PLAYING_WEEKS + 1 // weeks 45..48 are the offseason
+// Re-exported so every existing importer keeps working; defined in constants
+// so the season race can reach it without a cycle.
+export { PLAYING_WEEKS, OFFSEASON_WEEK }
 
 export const MAJOR_WEEKS = [11, 19, 26, 33]
 
@@ -210,6 +212,27 @@ export function createFixtures(rng) {
     })
   }
 
+  // The season finale. Top forty in the race only, no cut, and a purse to
+  // match what the whole year has been building towards.
+  fixtures.push({
+    id: FINALE_ID,
+    circuit: 'domestic',
+    finale: true,
+    name: 'The Tour Championship',
+    shortName: 'Tour Championship',
+    venue: venueName(rng, takenVenues),
+    city: 'Silvado',
+    week: FINALE_WEEK,
+    courseType: 'brutal',
+    difficulty: 1.14,
+    basePurse: 24000000,
+    fieldSize: FINALE_FIELD,
+    cutSize: FINALE_FIELD,
+    flagship: true,
+    isMajor: false,
+    blurb: 'Forty players, no cut, and a season on the line. Nobody here has had a bad year.',
+  })
+
   // Three senior majors, promoted from the ordinary senior schedule.
   const seniorEvents = fixtures.filter((f) => f.circuit === 'senior')
   const promoted = rng.shuffle(seniorEvents).slice(0, 3)
@@ -273,6 +296,7 @@ export function buildSeason(fixtures, yearsElapsed, rng) {
       flagship: !!f.flagship,
       isMajor: !!f.isMajor,
       seniorMajor: !!f.seniorMajor,
+      finale: !!f.finale,
       zone: f.zone || TRAVEL_ZONE[f.circuit] || 'home',
       blurb: f.blurb,
     }

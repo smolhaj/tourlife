@@ -1,5 +1,5 @@
 import { clamp } from './rng.js'
-import { PLAYING_WEEKS } from './schedule.js'
+import { PLAYING_WEEKS } from './constants.js'
 
 /**
  * Weather.

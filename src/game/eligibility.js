@@ -1,4 +1,5 @@
 import { SENIOR_AGE } from './constants.js'
+import { FINALE_FIELD, racePosition } from './race.js'
 import { overall } from './ratings.js'
 import { clamp } from './rng.js'
 
@@ -63,6 +64,16 @@ export function checkEligibility(state, event) {
     if (st === 'conditional' && !event.flagship) return { ok: true, via: 'Conditional senior status' }
     if (event.seniorMajor && state.career.majors > 0) return { ok: true, via: 'Major champion exemption' }
     return { ok: false, reason: 'No senior status for this event', qualifier: qualifierChance(state, event) }
+  }
+
+  // The finale takes the top forty in the season race and nobody else. No
+  // qualifier, no invitation, no past-champion exemption — it is the one week
+  // of the year that is purely a reward for the season you have just had.
+  if (event.finale) {
+    const race = racePosition(state)
+    if (race && race.inFinale) return { ok: true, via: `${race.pos}th in the race` }
+    if (!race) return { ok: false, reason: 'Not in the season race' }
+    return { ok: false, reason: `${race.pos}th in the race — top ${FINALE_FIELD} only` }
   }
 
   // The Emerging Circuit is the floor of the sport: ordinary events there take
