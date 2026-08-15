@@ -5,13 +5,14 @@
 // engine API and checks invariants after every season.
 
 import * as E from '../src/game/engine.js'
-import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS, CIRCUITS, COURSE_TYPES, PAYOUT_PCT } from '../src/game/constants.js'
+import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS, CIRCUITS, COURSE_TYPES, PAYOUT_PCT, SPONSOR_CATEGORIES } from '../src/game/constants.js'
 import { overall, progressYear, emptyRatings } from '../src/game/ratings.js'
 import { simTournament, makeEntrant } from '../src/game/tournament.js'
 import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf } from '../src/game/staff.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney, debtInterest, backerOffer, splitPrize } from '../src/game/finance.js'
+import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
 import { Rng } from '../src/game/rng.js'
 
 let pass = 0
@@ -913,6 +914,73 @@ section('SCENARIO 18 — money decides who gets to keep playing')
   const without = splitPrize(1_000_000, { pos: 1, madeCut: true, hasCaddie: true, agentCut: 0.05, backerCut: 0 })
   check('a backer is paid off the top', withBacker.backer === 300_000 && withBacker.net < without.net,
     `${withBacker.net} vs ${without.net}`)
+}
+
+// ---------------------------------------------------------------------------
+section('SCENARIO 19 — endorsement money is the size it is in real life')
+{
+  // This used to hand a four-major career $901m in endorsements and finish it
+  // with $2.6bn, against Tiger Woods' ~$120m on-course and ~$1bn net worth.
+  // Check the ladder against what players at each level are really paid, with
+  // a mid-range agent, so the numbers cannot quietly inflate again.
+  const order = [...SPONSOR_CATEGORIES].sort((a, b) => b.base - a.base).slice(0, MAX_CONCURRENT_DEALS)
+  const portfolio = (m, mult = 1.25) => order.reduce((a, c, i) => a + dealValue(c.id, m, mult, 0, null, i), 0)
+
+  const bands = [
+    ['fringe, ~top 250', 0.25, 50_000, 700_000],
+    ['card holder, ~top 120', 0.45, 300_000, 2_000_000],
+    ['good tour pro, ~top 60', 0.62, 1_000_000, 5_000_000],
+    ['elite, top ten', 0.8, 3_000_000, 15_000_000],
+    ['generational', 1.25, 15_000_000, 40_000_000],
+  ]
+  for (const [who, m, lo, hi] of bands) {
+    const v = portfolio(m)
+    check(`${who}: paid a believable amount`, v >= lo && v <= hi,
+      `${fmtMoney(v)} outside ${fmtMoney(lo)}–${fmtMoney(hi)}`)
+  }
+  console.log(
+    '   annual endorsements: ' +
+      bands.map(([, m]) => `m${m} ${fmtMoney(portfolio(m), { compact: true })}`).join(', '),
+  )
+
+  // The ladder must stay monotonic and steep enough that stardom is worth it.
+  for (let i = 1; i < bands.length; i++) {
+    check(`${bands[i][0]} out-earns ${bands[i - 1][0]}`, portfolio(bands[i][1]) > portfolio(bands[i - 1][1]))
+  }
+  check('a generational name is worth many times a good pro', portfolio(1.25) > portfolio(0.62) * 5,
+    `${fmtMoney(portfolio(1.25))} vs ${fmtMoney(portfolio(0.62))}`)
+
+  // Nobody carries ten logos. This cap used only to gate new offers once seven
+  // were already held, which let a star stack every category in the game.
+  const stacked = generateOffers(
+    new Rng(5),
+    { rank: 1, age: 30, season: { wins: 3 }, status: 'pro' },
+    { majors: 5, wins: 40 },
+    { agent: { q: 0.95 } },
+    SPONSOR_CATEGORIES.slice(0, MAX_CONCURRENT_DEALS).map((c) => ({ category: c.id, yearsLeft: 3 })),
+    0,
+    2.1,
+  )
+  check('a full book of logos gets no further offers', stacked.length === 0, `${stacked.length} offered`)
+
+  // And a whole career lands somewhere a person could believe.
+  let worst = null
+  for (let seed = 0; seed < 4; seed++) {
+    const s = E.newGame({ name: 'Great', seed: 6100 + seed * 401, talent: 0.86, age: 21 })
+    while (!s.player.retired && s.player.age < 46) {
+      E.autoOffseason(s)
+      if (s.player.retired) break
+      E.startSeason(s)
+      E.simToOffseason(s)
+    }
+    if (!worst || s.finance.cash > worst.cash) worst = { cash: s.finance.cash, majors: s.career.majors, wins: s.career.wins }
+  }
+  // Tiger's lifetime net worth is about $1bn off 15 majors. Ours may exceed it
+  // for a career that exceeds his, but not by an order of magnitude.
+  const ceiling = 400_000_000 + worst.majors * 120_000_000
+  check('the richest career is not absurd', worst.cash < ceiling,
+    `${fmtMoney(worst.cash)} off ${worst.majors} majors and ${worst.wins} wins`)
+  console.log(`   richest of four elite careers: ${fmtMoney(worst.cash, { compact: true })} off ${worst.majors} majors, ${worst.wins} wins`)
 }
 
 // ---------------------------------------------------------------------------
