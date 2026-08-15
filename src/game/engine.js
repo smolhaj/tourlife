@@ -1104,6 +1104,7 @@ export function advanceOneWeek(state, rng) {
       circuit: event.circuit,
       winner: outcome.winner,
       cutLine: outcome.cutLine,
+      conditions: outcome.conditions,
       top: outcome.results.slice(0, isUserEvent ? 20 : 3).map(trimResult),
       isMajor: event.isMajor,
       week,

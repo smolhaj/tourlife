@@ -1,6 +1,16 @@
 import { COURSE_TYPES, CIRCUITS, PAYOUT_PCT, pointsMultiplier, playstyleById } from './constants.js'
 import { courseSkill } from './ratings.js'
 import { clamp } from './rng.js'
+import {
+  NEUTRAL,
+  NORMAL_RAIN,
+  NORMAL_WIND,
+  conditionSigmaMult,
+  conditionStrokes,
+  rainEdgeOf,
+  rollConditions,
+  windEdgeOf,
+} from './weather.js'
 
 /** Strokes gained per point of course-specific rating, over 72 holes. */
 const STROKES_PER_QUALITY = 0.34
@@ -44,6 +54,11 @@ export function makeEntrant(player, ratings, event, extra = {}) {
     quality,
     sigma,
     scrambleEdge: style.scramble,
+    // How this player's game shifts per unit of wind and rain. Held as
+    // coefficients rather than a finished number because the weather is not
+    // known until the tournament is simulated, and it changes by the day.
+    windEdge: windEdgeOf(ratings),
+    rainEdge: rainEdgeOf(ratings),
     ratings,
     ignorePressure: !!extra.ignorePressure,
   }
@@ -77,12 +92,27 @@ function sundayPressure(pos54, mental) {
 }
 
 /**
+ * What one day's weather does to one player's score, in strokes.
+ *
+ * Two parts: what the day does to everybody (harder in wind and rain), and what
+ * it does to this player relative to the field (measured against the field's
+ * own average sensitivity, so the weather only ever reshuffles the order — it
+ * never quietly makes the whole field better or worse than it is).
+ */
+function dayShift(e, day, meanEdges) {
+  const rel =
+    (day.wind - NORMAL_WIND) * ((e.windEdge || 0) - meanEdges.wind) +
+    (day.rain - NORMAL_RAIN) * ((e.rainEdge || 0) - meanEdges.rain)
+  return conditionStrokes(day) - (rel * STROKES_PER_QUALITY) / 4
+}
+
+/**
  * Play the four rounds rather than deriving them from a total. Each round is a
  * quarter of the player's expected score with a quarter of the variance, so
  * four of them sum to exactly the distribution the single roll produced — the
  * only real change is that the last one knows where you stand.
  */
-function simulateRounds(entrants, { offset, meanQuality, event, rng, cutIndex, noCut }) {
+function simulateRounds(entrants, { offset, meanQuality, event, rng, cutIndex, noCut, days, meanEdges }) {
   const field = entrants.map((e) => {
     const skillStrokes = -(e.quality - meanQuality) * STROKES_PER_QUALITY
     const scramble = -e.scrambleEdge * 1.6
@@ -99,12 +129,17 @@ function simulateRounds(entrants, { offset, meanQuality, event, rng, cutIndex, n
   // Whole strokes, because that is what a round of golf is. Rounding at the
   // point of generation rather than for display is what makes the four numbers
   // on the leaderboard actually add up to the score beside them.
-  const roll = (r, sdMult = 1, shift = 0) =>
-    Math.round(r.mean + shift + rng.gaussClamped(0, r.sd * sdMult, 3.1))
+  const roll = (r, day, sdMult = 1, shift = 0) =>
+    Math.round(
+      r.mean +
+        dayShift(r.entrant, day, meanEdges) +
+        shift +
+        rng.gaussClamped(0, r.sd * sdMult * conditionSigmaMult(day), 3.1),
+    )
 
   // Thursday and Friday.
   for (const r of field) {
-    r.rounds.push(roll(r), roll(r))
+    r.rounds.push(roll(r, days[0]), roll(r, days[1]))
     r.through36 = r.rounds[0] + r.rounds[1]
   }
 
@@ -128,7 +163,7 @@ function simulateRounds(entrants, { offset, meanQuality, event, rng, cutIndex, n
 
   // Saturday sets up Sunday.
   for (const r of survivors) {
-    r.rounds.push(roll(r))
+    r.rounds.push(roll(r, days[2]))
     r.through54 = r.through36 + r.rounds[2]
   }
   ;[...survivors]
@@ -140,7 +175,7 @@ function simulateRounds(entrants, { offset, meanQuality, event, rng, cutIndex, n
   // Sunday, with the leaderboard in your pocket.
   for (const r of survivors) {
     const p = r.entrant.ignorePressure ? { shift: 0, sigmaMult: 1 } : sundayPressure(r.pos54, r.entrant.ratings?.mental)
-    r.rounds.push(roll(r, p.sigmaMult, p.shift))
+    r.rounds.push(roll(r, days[3], p.sigmaMult, p.shift))
     r.raw = r.through54 + r.rounds[3]
   }
   for (const r of goneHome) r.raw = r.through36
@@ -165,8 +200,22 @@ export function simTournament(event, entrants, rng, opts = {}) {
   const offset = scoringOffset(event.difficulty)
   const n = entrants.length
   let meanQuality = 0
-  for (const e of entrants) meanQuality += e.quality
-  meanQuality /= Math.max(1, n)
+  let meanWindEdge = 0
+  let meanRainEdge = 0
+  for (const e of entrants) {
+    meanQuality += e.quality
+    meanWindEdge += e.windEdge || 0
+    meanRainEdge += e.rainEdge || 0
+  }
+  const denom = Math.max(1, n)
+  meanQuality /= denom
+  const meanEdges = { wind: meanWindEdge / denom, rain: meanRainEdge / denom }
+
+  // Nobody knows the weather until the week arrives, so it is rolled here
+  // rather than carried on the schedule. A caller may supply it — the balance
+  // harness pins it flat to measure everything else.
+  const conditions = opts.conditions || event.conditions || rollConditions(rng, event.courseType)
+  const days = conditions.rounds && conditions.rounds.length === 4 ? conditions.rounds : [NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL]
 
   // Round-by-round only where somebody will see it. Playing the four rounds out
   // costs about four times a single roll, and 178 events run every season — so
@@ -188,6 +237,8 @@ export function simTournament(event, entrants, rng, opts = {}) {
       rng,
       cutIndex: nominalCut,
       noCut: noCutHere,
+      days,
+      meanEdges,
     })
     // Weekend players are ranked on 72 holes; everyone who went home on Friday
     // sits below them, in order of the 36 they did play.
@@ -200,12 +251,29 @@ export function simTournament(event, entrants, rng, opts = {}) {
     // read worse than an identical AI's for no reason. Two halves rather than
     // four rounds: same total distribution, one extra draw, and the weekend is
     // only simulated for players still in it.
+    // Two days of weather per half, so the world's tournaments feel the same
+    // wind the player's do. Variances add, which is why the half's spread is
+    // the root of the sum of the two days rather than their average.
+    const halfSd = (e, a, b) => {
+      const ma = conditionSigmaMult(a)
+      const mb = conditionSigmaMult(b)
+      return (e.sigma / 2) * Math.sqrt(ma * ma + mb * mb)
+    }
+    const halfShift = (e, a, b) => dayShift(e, a, meanEdges) + dayShift(e, b, meanEdges)
     const half = entrants.map((e) => {
       const skillStrokes = -(e.quality - meanQuality) * STROKES_PER_QUALITY
       const scramble = -e.scrambleEdge * 1.6
-      const mean = (offset + skillStrokes + scramble) / 2
-      const sd = e.sigma / Math.SQRT2
-      return { entrant: e, mean, sd, through36: mean + rng.gaussClamped(0, sd, 3.1) }
+      const base = (offset + skillStrokes + scramble) / 2
+      const firstMean = base + halfShift(e, days[0], days[1])
+      const firstSd = halfSd(e, days[0], days[1])
+      return {
+        entrant: e,
+        // `mean`/`sd` are the weekend's; the weekend is rolled later, only for
+        // whoever is still here.
+        mean: base + halfShift(e, days[2], days[3]),
+        sd: halfSd(e, days[2], days[3]),
+        through36: firstMean + rng.gaussClamped(0, firstSd, 3.1),
+      }
     })
     half.sort((a, b) => a.through36 - b.through36)
     const survivors = noCutHere ? half : half.slice(0, nominalCut)
@@ -369,6 +437,7 @@ export function simTournament(event, entrants, rng, opts = {}) {
     results,
     winner: winner ? { pid: winner.pid, name: winner.name, toPar: winner.toPar, flag: winner.flag } : null,
     cutLine,
+    conditions: { wind: conditions.wind, rain: conditions.rain },
     fieldSize: rows.length,
     meanQuality,
     strengthMult,

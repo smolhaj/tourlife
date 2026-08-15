@@ -13,7 +13,11 @@ import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney, debtInterest, backerOffer, splitPrize } from '../src/game/finance.js'
 import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
-import { Rng } from '../src/game/rng.js'
+import { Rng, clamp } from '../src/game/rng.js'
+import { conditionsLabel, rollConditions, NORMAL_WIND } from '../src/game/weather.js'
+
+const COURSE_TYPE_LIST = Object.keys(COURSE_TYPES)
+const clamp01to99 = (v) => clamp(v, 1, 99)
 
 let pass = 0
 let fail = 0
@@ -1097,6 +1101,121 @@ section('SCENARIO 20 — Sunday exists')
   check('a strong mind closes more often than a weak one', calm > fragile + 5,
     `${calm.toFixed(0)}% at mental 90 vs ${fragile.toFixed(0)}% at 25`)
   console.log(`   closing out: ${calm.toFixed(0)}% with a strong mind, ${fragile.toFixed(0)}% with a fragile one`)
+}
+
+section('SCENARIO 21 — the weather is playing too')
+{
+  const EV = { id: 'w', name: 'W', courseType: 'links', difficulty: 1, fieldSize: 144, cutSize: 65, purse: 8e6, circuit: 'domestic' }
+  const flat = (wind, rain = 0.2) => ({ wind, rain, rounds: [0, 1, 2, 3].map(() => ({ wind, rain })) })
+  const spread = (rng, base) => {
+    const r = emptyRatings(0)
+    for (const k of ATTR_KEYS) r[k] = clamp01to99(rng.gauss(base, 9))
+    return r
+  }
+  const pack = (rng, extra = []) => {
+    const out = extra.slice()
+    for (let j = out.length; j < EV.fieldSize; j++) {
+      const r = spread(rng, 50)
+      out.push(makeEntrant({ pid: 100 + j, name: `P${j}`, playstyle: 'balanced', form: 0, fatigue: 0 }, r, EV))
+    }
+    return out
+  }
+
+  // A gale is harder than a still morning, and everybody feels it.
+  const level = (wind) => {
+    const rng = new Rng(770)
+    let win = 0
+    let cut = 0
+    let strength = 0
+    const N = 260
+    for (let i = 0; i < N; i++) {
+      const out = simTournament(EV, pack(rng), rng, { conditions: flat(wind) })
+      win += out.winner.toPar
+      cut += out.cutLine
+      strength += out.strengthMult
+    }
+    return { win: win / N, cut: cut / N, strength: strength / N }
+  }
+  const calmWeek = level(0.05)
+  const galeWeek = level(0.85)
+  check('a gale plays harder than a calm morning', galeWeek.win > calmWeek.win + 3,
+    `winner ${calmWeek.win.toFixed(1)} calm vs ${galeWeek.win.toFixed(1)} in wind`)
+  check('the cut line moves with the weather too', galeWeek.cut > calmWeek.cut + 2,
+    `cut ${calmWeek.cut.toFixed(1)} vs ${galeWeek.cut.toFixed(1)}`)
+  // If the weather changed how strong the field looked, ranking points would
+  // drift with the forecast — a windy major would be worth less than a calm one.
+  check('weather does not change how strong the field is',
+    Math.abs(galeWeek.strength - calmWeek.strength) < 0.02,
+    `${calmWeek.strength.toFixed(3)} calm vs ${galeWeek.strength.toFixed(3)} windy`)
+  console.log(`   winning score: ${calmWeek.win.toFixed(1)} dead calm, ${galeWeek.win.toFixed(1)} in a gale`)
+
+  // And it changes who wins. Same two players, same course, different sky.
+  const straight = { ...emptyRatings(0), power: 40, accuracy: 78, irons: 66, shortGame: 68, putting: 58, consistency: 76, mental: 60 }
+  const bomber = { ...emptyRatings(0), power: 82, accuracy: 50, irons: 66, shortGame: 60, putting: 74, consistency: 54, mental: 60 }
+  const headToHead = (cond) => {
+    const rng = new Rng(881)
+    let sWins = 0
+    const N = 900
+    for (let i = 0; i < N; i++) {
+      const field = pack(rng, [
+        makeEntrant({ pid: 1, name: 'Straight', playstyle: 'balanced', form: 0, fatigue: 0 }, straight, EV),
+        makeEntrant({ pid: 2, name: 'Bomber', playstyle: 'balanced', form: 0, fatigue: 0 }, bomber, EV),
+      ])
+      const res = simTournament(EV, field, rng, { conditions: cond }).results
+      const a = res.find((r) => r.pid === 1)
+      const b = res.find((r) => r.pid === 2)
+      if (a.toPar < b.toPar) sWins += 1
+    }
+    return (100 * sWins) / N
+  }
+  const inCalm = headToHead(flat(0.05))
+  const inWind = headToHead(flat(0.85))
+  check('the wind pays the straight hitter', inWind > inCalm + 6,
+    `${inCalm.toFixed(0)}% calm vs ${inWind.toFixed(0)}% windy`)
+  console.log(`   straight-and-steady beats the bomber ${inCalm.toFixed(0)}% of the time in calm, ${inWind.toFixed(0)}% in a gale`)
+
+  // Whatever the sky is doing, the two simulation paths have to agree, or the
+  // player's own events would be scored on a different curve to the world's.
+  const cutRate = (detailed, wind) => {
+    const rng = new Rng(1717)
+    let made = 0
+    const N = 420
+    for (let i = 0; i < N; i++) {
+      const field = pack(rng, [makeEntrant({ pid: 1, name: 'Me', isUser: true, playstyle: 'balanced', form: 0, fatigue: 0 }, straight, EV)])
+      const me = simTournament(EV, field, rng, { conditions: flat(wind), detailed }).results.find((r) => r.pid === 1)
+      if (me.madeCut) made += 1
+    }
+    return (100 * made) / N
+  }
+  for (const wind of [0.05, 0.85]) {
+    const cheap = cutRate(false, wind)
+    const played = cutRate(true, wind)
+    check(`both sim paths agree at wind ${wind}`, Math.abs(cheap - played) < 7,
+      `cheap ${cheap.toFixed(0)}% vs played ${played.toFixed(0)}%`)
+  }
+
+  // Rounds still add up when each day has its own weather.
+  const rng = new Rng(55)
+  const mixed = { wind: 0.5, rain: 0.3, rounds: [{ wind: 0.05, rain: 0 }, { wind: 0.95, rain: 0.9 }, { wind: 0.2, rain: 0.1 }, { wind: 0.8, rain: 0.2 }] }
+  const played = simTournament(EV, pack(rng), rng, { conditions: mixed, detailed: true, detailRows: 144 })
+  const bad = played.results.filter((r) => r.rounds && r.rounds.reduce((a, x) => a + x.toPar, 0) !== r.toPar)
+  check('rounds add up on a week of mixed weather', bad.length === 0, `${bad.length} rows do not sum`)
+  check('the result reports the conditions', typeof played.conditions?.wind === 'number' && conditionsLabel(played.conditions).length > 0,
+    JSON.stringify(played.conditions))
+
+  // Rolled weather stays inside its bounds and averages out to a normal week.
+  const wr = new Rng(303)
+  let wSum = 0
+  let worst = 0
+  for (let i = 0; i < 4000; i++) {
+    const c = rollConditions(wr, COURSE_TYPE_LIST[i % COURSE_TYPE_LIST.length])
+    wSum += c.wind
+    worst = Math.max(worst, c.wind)
+    if (c.wind < 0 || c.wind > 1 || c.rain < 0 || c.rain > 1) { worst = 99; break }
+  }
+  check('weather stays inside its bounds', worst <= 1, `max wind ${worst.toFixed(2)}`)
+  check('an average week across the tour is a normal one', Math.abs(wSum / 4000 - NORMAL_WIND) < 0.03,
+    `mean wind ${(wSum / 4000).toFixed(3)} vs ${NORMAL_WIND}`)
 }
 
 // ---------------------------------------------------------------------------
