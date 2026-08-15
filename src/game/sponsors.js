@@ -2,7 +2,36 @@ import { SPONSOR_CATEGORIES, SPONSOR_BRANDS } from './constants.js'
 import { clamp } from './rng.js'
 import { inflation } from './schedule.js'
 
-const BASE_DEAL = 3_500_000
+/**
+ * Endorsement money, calibrated against the real thing.
+ *
+ * The old numbers produced a four-major career worth $901m in endorsements —
+ * roughly Tiger Woods at his absolute peak, sustained for twenty-three years,
+ * for a considerably lesser player. Three things caused it: a base deal set at
+ * Nike money, an exponent that made the top of the marketability range
+ * explosive, and a logo cap that did not hold, so a star ended up carrying ten
+ * concurrent contracts. A real athlete has four to six that matter.
+ *
+ * What these are aimed at, per year, gross:
+ *   generational at peak (world no.1, several majors)   $25-35m
+ *   elite (top ten, a major)                            $8-15m
+ *   solid tour pro (top sixty)                          $1.5-4m
+ *   fringe (top two hundred)                            $200-600k
+ */
+const BASE_DEAL = 2_850_000
+const MARKET_EXPONENT = 3.2
+
+/** Nobody sells more than this many logos at once, however marketable. */
+export const MAX_CONCURRENT_DEALS = 6
+
+/**
+ * The fifth logo on a shirt is not worth what the first was. Deals are priced
+ * against the slot they occupy, which is why a stacked portfolio grows towards
+ * a ceiling instead of multiplying.
+ */
+function slotScale(index) {
+  return 1 / (1 + index * 0.34)
+}
 
 /**
  * How sellable the player is right now, 0..1.
@@ -23,9 +52,10 @@ export function marketability(p, career) {
   return clamp(m, 0, 1.25)
 }
 
-export function dealValue(category, m, agentMult, yearsElapsed, rng) {
+export function dealValue(category, m, agentMult, yearsElapsed, rng, slotIndex = 0) {
   const cat = SPONSOR_CATEGORIES.find((c) => c.id === category)
-  const raw = BASE_DEAL * cat.base * Math.pow(m, 2.6) * agentMult * inflation(yearsElapsed)
+  const raw =
+    BASE_DEAL * cat.base * Math.pow(m, MARKET_EXPONENT) * agentMult * inflation(yearsElapsed) * slotScale(slotIndex)
   const jitter = rng ? rng.float(0.82, 1.2) : 1
   return Math.max(15000, Math.round((raw * jitter) / 5000) * 5000)
 }
@@ -37,16 +67,19 @@ export function dealValue(category, m, agentMult, yearsElapsed, rng) {
 export function generateOffers(rng, player, career, staff, activeDeals, yearsElapsed, agentMult) {
   const m = marketability(player, career)
   const live = activeDeals.filter((d) => d.yearsLeft > 0)
-  // Nobody signs everything — past seven logos an athlete runs out of surface
-  // area and the deals start cannibalising each other.
-  if (live.length >= 7) return []
+  // Nobody signs everything. This used to only stop *new* offers once seven
+  // were held, which let a star stack ten at once; the room left is now what
+  // bounds the offers.
+  const room = MAX_CONCURRENT_DEALS - live.length
+  if (room <= 0) return []
   const held = new Set(live.map((d) => d.category))
   const available = SPONSOR_CATEGORIES.filter((c) => !held.has(c.id))
-  const slots = clamp(Math.round(1 + m * 6 + (staff.agent ? staff.agent.q * 2.5 : 0)), 0, available.length)
+  const slots = clamp(Math.round(1 + m * 4 + (staff.agent ? staff.agent.q * 2 : 0)), 0, Math.min(room, available.length))
   const chosen = rng.shuffle(available).slice(0, slots)
 
-  return chosen.map((cat) => {
-    const annual = dealValue(cat.id, m, agentMult, yearsElapsed, rng)
+  return chosen.map((cat, i) => {
+    // Priced against the shirt space already sold.
+    const annual = dealValue(cat.id, m, agentMult, yearsElapsed, rng, live.length + i)
     const years = rng.int(2, m > 0.6 ? 5 : 4)
     const brand = rng.pick(SPONSOR_BRANDS[cat.id])
     const minRank = m > 0.7 ? rng.int(30, 70) : m > 0.4 ? rng.int(70, 140) : rng.int(150, 300)

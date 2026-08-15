@@ -8,7 +8,7 @@ import {
   ATTRS,
 } from '../game/constants.js'
 import { Q_SCHOOL_FEE, cardStatus, CARD_LABELS } from '../game/eligibility.js'
-import { fmtMoney } from '../game/finance.js'
+import { fmtMoney, DEBT_INTEREST } from '../game/finance.js'
 import { techBaseline } from '../game/equipment.js'
 import { coachTrainingBonus, qualityOf, qualityEffect, qualityBand } from '../game/staff.js'
 import { ratingTextColor } from '../game/ratings.js'
@@ -26,6 +26,10 @@ const STEPS = [
   ['money', 'Deals & life'],
   ['schedule', 'Schedule'],
 ]
+
+function capitalise(t) {
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : t
+}
 
 export default function Offseason({ state, actions }) {
   const [step, setStep] = useState('review')
@@ -66,7 +70,7 @@ export default function Offseason({ state, actions }) {
         ))}
       </div>
 
-      {step === 'review' ? <Review state={state} last={last} os={os} /> : null}
+      {step === 'review' ? <Review state={state} last={last} os={os} actions={actions} /> : null}
       {step === 'status' ? <Status state={state} actions={actions} /> : null}
       {step === 'training' ? <Training state={state} actions={actions} /> : null}
       {step === 'staff' ? <StaffMarket state={state} actions={actions} /> : null}
@@ -88,7 +92,7 @@ export default function Offseason({ state, actions }) {
 
 // ------------------------------------------------------------------- review
 
-function Review({ state, last, os }) {
+function Review({ state, last, os, actions }) {
   return (
     <div className="grid grid-main">
       <div className="col">
@@ -113,6 +117,64 @@ function Review({ state, last, os }) {
             </Empty>
           </Card>
         )}
+
+        {os.solvency && os.solvency.state !== 'clear' && os.solvency.state !== 'borrowing' ? (
+          <Card title={os.solvency.insolvent ? 'The money has run out' : 'The money is running out'}>
+            <div style={{ fontSize: 15 }}>
+              {os.solvency.insolvent ? (
+                <>
+                  You owe <b className="red">{fmtMoney(os.solvency.debt)}</b> and nobody will lend you another penny.
+                  Entry fees and flights are due long before any prize money arrives, so unless somebody funds you,
+                  there is no season to start.
+                </>
+              ) : (
+                <>
+                  You owe <b className="red">{fmtMoney(os.solvency.debt)}</b> against a ceiling of about{' '}
+                  {fmtMoney(os.solvency.limit)}. That leaves <b>{fmtMoney(os.solvency.headroom)}</b> to fund a whole
+                  year on, and the debt itself costs you {fmtMoney(Math.round(os.solvency.debt * DEBT_INTEREST))} in
+                  interest before you hit a shot.
+                </>
+              )}
+            </div>
+            <div className="xs muted" style={{ marginTop: 8, lineHeight: 1.5 }}>
+              Cheaper living, fewer staff and a shorter schedule all help. Winter work in the training tab pays the
+              bills at the cost of a winter's practice.
+            </div>
+          </Card>
+        ) : null}
+
+        {os.backerOffer ? (
+          <Card title="Somebody wants to back you">
+            <div style={{ fontSize: 15 }}>
+              <b className="gold">{capitalise(os.backerOffer.name)}</b> will put up{' '}
+              <b>{fmtMoney(os.backerOffer.amount)}</b> now, against{' '}
+              <b>{Math.round(os.backerOffer.cut * 100)}%</b> of everything you win for the next{' '}
+              {plural(os.backerOffer.years, 'year')}.
+            </div>
+            <div className="xs muted" style={{ marginTop: 8, lineHeight: 1.5 }}>
+              It clears the debt and pays for a season. It also comes off the top of every cheque, before the caddie,
+              the agent and the tax — so a good year costs you a great deal more than the money is worth. This is how
+              the bottom of the game is financed, and it is the only way out that is not quitting.
+            </div>
+            <div className="row" style={{ marginTop: 10, gap: 8 }}>
+              <button className="btn primary" onClick={actions.acceptBacker}>
+                Take the money
+              </button>
+              <button className="btn ghost" onClick={actions.declineBacker}>
+                Go it alone
+              </button>
+            </div>
+          </Card>
+        ) : null}
+
+        {os.backerEnded ? (
+          <Card title="Your backer is paid off">
+            <div style={{ fontSize: 15 }}>
+              {capitalise(os.backerEnded.name)} took {fmtMoney(os.backerEnded.paidBack || 0)} against the{' '}
+              {fmtMoney(os.backerEnded.amount)} they put up. Every cheque is yours again.
+            </div>
+          </Card>
+        ) : null}
 
         {os.lifeEvent ? (
           <Card title="Off the course">

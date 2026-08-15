@@ -426,7 +426,23 @@ export const TRAINING_OPTIONS = [
   { id: 'mental', name: 'Mental performance block', attr: 'mental', blurb: 'Breathing, routine, and honest conversations.', fatigue: 2, injury: 0 },
   { id: 'rest', name: 'Total rest', attr: null, blurb: 'Do nothing. Heal, reset, see your family.', fatigue: -45, injury: -0.05, healing: 2.2 },
   { id: 'balanced', name: 'Balanced offseason', attr: 'all', blurb: 'A bit of everything. Safe.', fatigue: 4, injury: 0.005 },
+  {
+    id: 'work',
+    name: 'Take winter work',
+    attr: null,
+    blurb: 'Club pro shop, lessons, corporate days. Pays the bills. Costs you the winter.',
+    fatigue: -10,
+    injury: -0.01,
+    work: true,
+  },
 ]
+
+/**
+ * What a winter behind the counter and on the lesson tee is worth. Real money
+ * at the bottom of the game, and irrelevant once you are winning — which is
+ * exactly why it is the option you take when you cannot afford to practise.
+ */
+export const WINTER_WORK_PAY = 46_000
 
 // -------------------------------------------------------------------- career
 
