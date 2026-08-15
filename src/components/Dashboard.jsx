@@ -7,6 +7,7 @@ import { fmtMoney, coastStatus } from '../game/finance.js'
 import { recoveryNote } from '../game/injuries.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
 import { familiarityLabel, venueEdgeFor, venueStartsOf, venueWinsOf } from '../game/venue.js'
+import { CUP_WEEK, cupForYear, eligibleTeamFor } from '../game/teamcup.js'
 import { Card, Stat, StatGrid, Chip, CircuitChip, Money, ToPar, posLabel, Empty, ProgressBar } from './ui.jsx'
 
 export default function Dashboard({ state, onOpenResult, onGoTab }) {
@@ -23,6 +24,8 @@ export default function Dashboard({ state, onOpenResult, onGoTab }) {
     <div className="grid grid-main">
       <div className="col">
         <NextEvent state={state} event={next} />
+
+        <CupWeek state={state} />
 
         <Card title={`${state.year} season`} aux={`Week ${Math.min(state.week, PLAYING_WEEKS)} of ${PLAYING_WEEKS}`}>
           <StatGrid>
@@ -236,6 +239,39 @@ function Gauge({ label, value, display, tone, invert }) {
         <div className="fill" style={{ width: `${pct}%`, background: invert && pct > 65 ? 'var(--red)' : tone }} />
       </div>
     </div>
+  )
+}
+
+/**
+ * The cup is not on the schedule — you cannot enter it, you can only be
+ * picked — so it needs saying somewhere the player will see it coming.
+ */
+function CupWeek({ state }) {
+  const cup = cupForYear(state.year)
+  const side = eligibleTeamFor(cup, state.player.region)
+  const weeksAway = CUP_WEEK - state.week
+  if (weeksAway < 0 || weeksAway > 6) return null
+  const rank = state.player.rank || 999
+  const inTheMix = side && rank <= 40 && state.player.status !== 'amateur'
+  return (
+    <Card title={cup.name} aux={weeksAway === 0 ? 'This week' : `In ${weeksAway} week${weeksAway === 1 ? '' : 's'}`}>
+      <div className="small muted">{cup.blurb}</div>
+      <div className="row wrap gap-sm" style={{ marginTop: 8 }}>
+        <Chip>{cup.home.name} v {cup.away.name}</Chip>
+        {side ? (
+          <Chip tone={inTheMix ? 'green' : undefined}>
+            {inTheMix
+              ? `In the frame for ${side.short} at #${rank}`
+              : side && state.player.status === 'amateur'
+                ? 'Amateurs are not picked'
+                : `Out of the frame for ${side.short} at #${rank === 999 ? '—' : rank}`}
+          </Chip>
+        ) : (
+          <Chip tone="red">No side for {state.player.region.toUpperCase()} this year</Chip>
+        )}
+        <Chip>Ten qualify, two picked</Chip>
+      </div>
+    </Card>
   )
 }
 

@@ -17,6 +17,8 @@ import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, NORMAL_WIND } from '../src/game/weather.js'
 import { venueEdge, familiarityLabel } from '../src/game/venue.js'
 import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
+import { CUPS, CUP_WEEK, cupForYear, recordText, simCup } from '../src/game/teamcup.js'
+import { REGIONS } from '../src/game/names.js'
 
 const COURSE_TYPE_LIST = Object.keys(COURSE_TYPES)
 const clamp01to99 = (v) => clamp(v, 1, 99)
@@ -1359,6 +1361,109 @@ section('SCENARIO 23 — a new club has to be earned')
   check('and top-end sponsor gear is worth having once you can use it', s2.ovr > settledOvr,
     `${s2.ovr} vs ${settledOvr}`)
   console.log(`   whole-bag switch: ${settledOvr.toFixed(1)} ovr → ${switchedOvr.toFixed(1)} on day one → ${s2.ovr.toFixed(1)} once bedded in`)
+}
+
+section('SCENARIO 24 — the week that pays nothing')
+{
+  // Alternating cups, so every region gets a side every other year.
+  const years = [2030, 2031, 2032, 2033]
+  check('the two cups alternate', years.map((y) => cupForYear(y).id).join(',') === 'continental,pacific,continental,pacific',
+    years.map((y) => cupForYear(y).id).join(','))
+  const covered = new Set()
+  for (const cup of [CUPS.continental, CUPS.pacific]) {
+    for (const side of [cup.home, cup.away]) for (const r of side.regions) covered.add(r)
+  }
+  check('every region in the game has a side to play for', REGIONS.every((r) => covered.has(r.id)),
+    REGIONS.filter((r) => !covered.has(r.id)).map((r) => r.id).join(','))
+
+  // Neither side is structurally favoured. Identical teams must split evenly.
+  {
+    const rng = new Rng(31)
+    const team = (n) =>
+      Array.from({ length: 12 }, (_, i) => ({
+        player: { pid: n * 100 + i, name: `${n}-${i}`, form: 0, fatigue: 0, ratings: emptyRatings(65) },
+        ratings: emptyRatings(65),
+        pick: false,
+      }))
+    let home = 0
+    let away = 0
+    let pts = 0
+    const N = 1200
+    for (let i = 0; i < N; i++) {
+      const r = simCup(CUPS.continental, team(1), team(2), 'classic', rng, null)
+      pts += r.homePts
+      if (r.winner === CUPS.continental.home.id) home += 1
+      else away += 1
+      if (r.homePts + r.awayPts !== 28) { home = -1; break }
+    }
+    check('a cup is always worth 28 points', home >= 0)
+    check('neither side of a cup is favoured', Math.abs(pts / N - 14) < 0.4, `home averages ${(pts / N).toFixed(2)}/28`)
+    console.log(`   identical teams: ${home}/${away} and ${(pts / N).toFixed(2)} points a side`)
+  }
+
+  // Match play throws away the size of a beating, so an individual underdog
+  // wins far more often than eighteen holes of stroke play would allow — but
+  // over 28 matches a genuinely better *team* still comes through. Real cup
+  // sides are within a point or two of each other, which is why they are
+  // close; that is the gap worth testing.
+  {
+    const rng = new Rng(77)
+    const side = (base, r) =>
+      Array.from({ length: 12 }, (_, i) => ({
+        player: { pid: base + i, name: `p${base + i}`, form: 0, fatigue: 0, ratings: emptyRatings(r) },
+        ratings: emptyRatings(r),
+        pick: false,
+      }))
+    const rateFor = (gap) => {
+      let strong = 0
+      const N = 500
+      for (let i = 0; i < N; i++) {
+        if (simCup(CUPS.pacific, side(0, 64 + gap), side(50, 64), 'classic', rng, null).winner === CUPS.pacific.home.id)
+          strong += 1
+      }
+      return (100 * strong) / N
+    }
+    const close = rateFor(2)
+    const wide = rateFor(8)
+    check('the better side of a close cup usually wins', close > 55, `${close.toFixed(0)}%`)
+    check('but a close cup is genuinely close', close < 88, `${close.toFixed(0)}%`)
+    check('a mismatch is a mismatch', wide > close + 8, `${wide.toFixed(0)}% vs ${close.toFixed(0)}%`)
+    console.log(`   a side two points better wins ${close.toFixed(0)}% of cups; eight points better, ${wide.toFixed(0)}%`)
+  }
+
+  // A tie retains: the holder keeps it.
+  {
+    const tie = simCup(CUPS.continental, [], [], 'classic', new Rng(1), CUPS.continental.away.id)
+    check('a 0–0 cup is retained by the holder', tie.winner === CUPS.continental.away.id && tie.retained,
+      `${tie.winner}`)
+  }
+
+  // And it has to actually happen in a career, with records that add up.
+  const s = E.newGame({ name: 'Cap', seed: 5150, talent: 0.82, age: 22, regionId: 'usa' })
+  for (let i = 0; i < 12; i++) {
+    E.autoOffseason(s)
+    if (s.player.retired) break
+    E.startSeason(s)
+    E.simToOffseason(s)
+  }
+  check('the cups were played every season', s.cupHistory.length === 12, `${s.cupHistory.length} cups`)
+  check('every cup was won by somebody', s.cupHistory.every((h) => h.winner), '')
+  check('a good American player gets capped', s.career.teamCaps > 0, `${s.career.teamCaps} caps`)
+  const r = s.career.teamRecord
+  check('the team record adds up to matches played', r.w + r.l + r.h >= s.career.teamCaps * 4,
+    `${recordText(r)} from ${s.career.teamCaps} caps`)
+  check('you cannot win more cups than you played in', s.career.teamCupWins <= s.career.teamCaps,
+    `${s.career.teamCupWins} of ${s.career.teamCaps}`)
+  check('caps are counted against the cups that were played',
+    s.career.teamCaps === s.cupHistory.filter((h) => h.played).length,
+    `${s.career.teamCaps} vs ${s.cupHistory.filter((h) => h.played).length}`)
+  // Cup week is cleared: you cannot be in two places at once.
+  const cupWeekStarts = s.career.allResults.filter((x) => x.week === CUP_WEEK).length
+  check('you never played a tournament in a cup week you were picked for',
+    cupWeekStarts <= s.cupHistory.filter((h) => !h.played).length, `${cupWeekStarts} starts in week ${CUP_WEEK}`)
+  const back = importSave(exportSave(s))
+  check('caps survive a save', back.career.teamCaps === s.career.teamCaps && back.cupHistory.length === 12)
+  console.log(`   ${s.career.teamCaps} caps, ${recordText(s.career.teamRecord)}, ${s.career.teamCupWins} cups won over 12 seasons`)
 }
 
 // ---------------------------------------------------------------------------

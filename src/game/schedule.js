@@ -224,6 +224,19 @@ export function createFixtures(rng) {
   return fixtures
 }
 
+/**
+ * The rota the team cup is played on. Six courses, alternating home and away,
+ * so a long career sees each of them two or three times and the venue is
+ * something a player can have history with.
+ */
+export function cupVenueRota(rng) {
+  const taken = new Set()
+  return Array.from({ length: 6 }, () => ({
+    venue: venueName(rng, taken),
+    courseType: rng.pick(['classic', 'precision', 'links', 'brutal', 'bomber', 'resort']),
+  }))
+}
+
 /** Purse inflation, ~3.4% a year compounding from the career's first season. */
 export function inflation(yearsElapsed) {
   return Math.pow(1.022, yearsElapsed)

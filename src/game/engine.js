@@ -13,6 +13,7 @@ import { makeRatings, overall, progressYear, jigglePotential } from './ratings.j
 import { regionById } from './names.js'
 import {
   createFixtures,
+  cupVenueRota,
   buildSeason,
   inflation,
   PLAYING_WEEKS,
@@ -29,6 +30,15 @@ import {
 } from './world.js'
 import { makeEntrant, simTournament } from './tournament.js'
 import { venueEdgeFor } from './venue.js'
+import {
+  CUP_WEEK,
+  cupForYear,
+  eligibleTeamFor,
+  recordPoints,
+  recordText,
+  selectTeam,
+  simCup,
+} from './teamcup.js'
 import {
   emptyStaff,
   generateStaffMarket,
@@ -151,6 +161,7 @@ export function newGame(opts = {}) {
   world.players.unshift(player)
 
   const fixtures = createFixtures(rng)
+  const cupRota = cupVenueRota(rng)
 
   const state = {
     version: GAME_VERSION,
@@ -167,6 +178,10 @@ export function newGame(opts = {}) {
     player,
     world,
     fixtures,
+    cupRota,
+    // Whoever is holding each cup. A tie retains it, so this matters.
+    cupHolders: { continental: null, pacific: null },
+    cupHistory: [],
     season: [],
     nextSeason: buildSeason(fixtures, 0, rng),
     entered: {},
@@ -203,6 +218,10 @@ export function newGame(opts = {}) {
       rivals: [],
       venueWins: {},
       venueStarts: {},
+      teamCaps: 0,
+      teamPicks: 0,
+      teamCupWins: 0,
+      teamRecord: { w: 0, l: 0, h: 0 },
       lastMajorWinYear: null,
       firstWinYear: null,
       asianOrderOfMeritWins: 0,
@@ -668,6 +687,116 @@ function fatigueCost(state, event, p) {
   return cost
 }
 
+// ------------------------------------------------------------------ the cups
+
+/**
+ * Play this year's team cup. Runs whether or not the player is anywhere near
+ * the team — the cup is part of the world, and being left out of one is a
+ * result in itself.
+ */
+function runTeamCup(state, rng) {
+  const cup = cupForYear(state.year)
+  const p = state.player
+  const rota = state.cupRota?.[state.yearsElapsed % (state.cupRota?.length || 1)] || {
+    venue: 'Cup Links',
+    courseType: 'classic',
+  }
+
+  // Amateurs do not play in these, and nor does anybody who is hurt.
+  const available = state.world.players.filter((w) => !w.isUser && w.status !== 'amateur' && !(w.injury && w.injury.out))
+  const userAvailable = p.status !== 'amateur' && !(p.injury && p.injury.out)
+  const mySide = userAvailable ? eligibleTeamFor(cup, p.region) : null
+  if (userAvailable && mySide) available.push(p)
+
+  const homeTeam = selectTeam(available, cup.home, rng).map(shapeCupEntry(state, cup.home.id))
+  const awayTeam = selectTeam(available, cup.away, rng).map(shapeCupEntry(state, cup.away.id))
+
+  const mine = [...homeTeam, ...awayTeam].find((e) => e.player.isUser)
+  const result = simCup(cup, homeTeam, awayTeam, rota.courseType, rng, state.cupHolders?.[cup.id])
+  state.cupHolders[cup.id] = result.winner
+  state.cupHistory.push({
+    year: state.year,
+    cupId: cup.id,
+    name: cup.name,
+    venue: rota.venue,
+    homePts: result.homePts,
+    awayPts: result.awayPts,
+    winner: result.winner,
+    retained: result.retained,
+    played: !!mine,
+  })
+  if (state.cupHistory.length > 40) state.cupHistory.shift()
+
+  const winnerName = result.winner === cup.home.id ? cup.home.short : cup.away.short
+  const score = `${result.homePts}–${result.awayPts}`
+  pushNews(
+    state,
+    `${winnerName} ${result.retained ? 'retain' : 'win'} ${cup.name} at ${rota.venue}, ${score}.`,
+    'info',
+  )
+
+  if (!mine) {
+    // Being close enough to be talked about and left out is its own kind of week.
+    if (mySide && (p.rank || 999) <= 25) {
+      pushLog(state, {
+        week: CUP_WEEK,
+        year: state.year,
+        kind: 'mc',
+        text: `Left out of the ${cup.short} team.`,
+        detail: `Ranked #${p.rank}. The captain went elsewhere.`,
+      })
+    }
+    return { cup, result, userPlayed: false }
+  }
+
+  // The player's week.
+  const row = [...result.home, ...result.away].find((e) => e.player.isUser)
+  const won = result.winner === mine.side
+  const c = state.career
+  c.teamCaps += 1
+  if (mine.pick) c.teamPicks += 1
+  c.teamRecord.w += row.w
+  c.teamRecord.l += row.l
+  c.teamRecord.h += row.h
+  if (won) c.teamCupWins += 1
+  p.fatigue = clamp(p.fatigue + 11, 0, 100)
+  p.morale = clamp(p.morale + (won ? 9 : row.w >= 3 ? 4 : -3), 0, 100)
+  state.lastCircuitPlayed = 'team'
+
+  pushLog(state, {
+    week: CUP_WEEK,
+    year: state.year,
+    kind: won ? 'win' : 'result',
+    text: `${cup.short} — ${recordText(row)}, ${winnerName} ${result.retained ? 'retain' : 'win'} ${score}.`,
+    detail: `${mine.pick ? "A captain's pick. " : ''}${plural(row.played, 'match')} at ${rota.venue}.`,
+  })
+
+  if (c.teamCaps === 1) {
+    addHighlight(state, 'firstcap', {
+      title: `First ${cup.short} cap`,
+      text: `Picked for ${mine.side === cup.home.id ? cup.home.name : cup.away.name} at ${rota.venue}. ${recordText(row)} on debut.`,
+      importance: 3,
+    })
+  } else if (won && recordPoints(row) >= 4) {
+    addHighlight(state, 'cuphero', {
+      title: `${recordPoints(row)} points in the ${cup.short}`,
+      text: `${recordText(row)} from ${plural(row.played, 'match')} as ${winnerName} took it ${score}.`,
+      importance: 3,
+    })
+  }
+
+  return { cup, result, userPlayed: true, row }
+}
+
+/** Attach the ratings the cup should judge a player on. */
+function shapeCupEntry(state, sideId) {
+  return (entry) => ({
+    ...entry,
+    ratings: entry.player.isUser ? state.effRatings : aiEffRatings(entry.player),
+    side: sideId,
+  })
+}
+
 // --------------------------------------------------------- user result hooks
 
 function recordUserResult(state, event, outcome, rng, byPid) {
@@ -1092,6 +1221,19 @@ export function advanceOneWeek(state, rng) {
       year: state.year,
       kind: 'wd',
       text: `Withdrew from ${withArticle(userEvent.name)} — ${p.injury.name}.`,
+    })
+    userEvent = null
+  }
+
+  // Cup week. If you are on the team you are not playing anywhere else, which
+  // is true of the real thing too — the week is cleared for it.
+  const cup = week === CUP_WEEK ? runTeamCup(state, rng) : null
+  if (cup && cup.userPlayed && userEvent) {
+    pushLog(state, {
+      week,
+      year: state.year,
+      kind: 'info',
+      text: `Skipped ${withArticle(userEvent.name)} — cup week.`,
     })
     userEvent = null
   }

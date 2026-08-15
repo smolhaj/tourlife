@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { fmtMoney } from '../game/finance.js'
 import { legacyScore, legacyLabel, majorNarrative, plural } from '../game/narrative.js'
+import { CUPS, CUP_WEEK, eligibleTeamFor, recordPoints, recordText } from '../game/teamcup.js'
 import { Card, Stat, StatGrid, Chip, CircuitChip, Money, Empty, Sparkline } from './ui.jsx'
 
 export default function CareerView({ state }) {
@@ -34,6 +35,7 @@ export default function CareerView({ state }) {
           ['highlights', 'Highlights'],
           ['wins', `Wins (${c.winsList.length})`],
           ['results', 'Every start'],
+          ['cups', `Team cups${c.teamCaps ? ` (${c.teamCaps})` : ''}`],
         ].map(([id, label]) => (
           <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>
             {label}
@@ -45,6 +47,7 @@ export default function CareerView({ state }) {
       {tab === 'highlights' ? <Highlights state={state} /> : null}
       {tab === 'wins' ? <WinsList state={state} /> : null}
       {tab === 'results' ? <AllResults state={state} /> : null}
+      {tab === 'cups' ? <TeamCups state={state} /> : null}
 
       <Card title="Legacy" aux={`${legacy} Hall of Fame points`}>
         <div className="row wrap between center">
@@ -64,6 +67,81 @@ export default function CareerView({ state }) {
             <Chip>{c.seniorWins} senior wins</Chip>
           </div>
         </div>
+      </Card>
+    </div>
+  )
+}
+
+function TeamCups({ state }) {
+  const c = state.career
+  const p = state.player
+  const history = [...(state.cupHistory || [])].reverse()
+  const side = (cupId, teamId) => {
+    const cup = CUPS[cupId]
+    if (!cup) return teamId
+    return teamId === cup.home.id ? cup.home.short : cup.away.short
+  }
+  const myTeams = [CUPS.continental, CUPS.pacific]
+    .map((cup) => ({ cup, team: eligibleTeamFor(cup, p.region) }))
+    .filter((x) => x.team)
+
+  return (
+    <div className="col">
+      <Card title="Team record" aux={c.teamCaps ? `${plural(c.teamCaps, 'cap')}` : 'uncapped'}>
+        {c.teamCaps ? (
+          <StatGrid>
+            <Stat k="Caps" v={c.teamCaps} s={c.teamPicks ? `${c.teamPicks} as a pick` : 'all on merit'} />
+            <Stat k="Record" v={recordText(c.teamRecord)} s="won–lost–halved" />
+            <Stat k="Points" v={recordPoints(c.teamRecord)} s={`from ${plural(c.teamRecord.w + c.teamRecord.l + c.teamRecord.h, 'match')}`} />
+            <Stat k="Cups won" v={c.teamCupWins} tone={c.teamCupWins ? 'gold' : ''} s={`of ${c.teamCaps}`} />
+          </StatGrid>
+        ) : (
+          <Empty>
+            {myTeams.length
+              ? `Uncapped. Ten places go on world ranking and the captain picks the last two — ${myTeams
+                  .map((x) => `${x.team.short} in the ${x.cup.short}`)
+                  .join(', ')}.`
+              : 'Your country does not field a side in either cup.'}
+          </Empty>
+        )}
+      </Card>
+
+      <Card title="The cups" aux="no prize money, no ranking points">
+        {history.length === 0 ? (
+          <Empty>None played yet. They fall in week {CUP_WEEK}.</Empty>
+        ) : (
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Year</th>
+                  <th>Cup</th>
+                  <th>Venue</th>
+                  <th className="num">Score</th>
+                  <th>Winner</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h, i) => (
+                  <tr key={`${h.year}-${i}`}>
+                    <td className="mono muted-2">{h.year}</td>
+                    <td>{h.name}</td>
+                    <td className="muted small">{h.venue}</td>
+                    <td className="num mono">
+                      {h.homePts}–{h.awayPts}
+                    </td>
+                    <td className={h.played ? 'b' : ''}>
+                      {side(h.cupId, h.winner)}
+                      {h.retained ? <span className="muted-2 xs"> (retained)</span> : null}
+                    </td>
+                    <td>{h.played ? <Chip tone="blue">played</Chip> : null}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   )
