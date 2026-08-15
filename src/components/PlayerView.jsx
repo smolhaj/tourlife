@@ -4,7 +4,7 @@ import { tourAverages } from '../game/engine.js'
 import { overallLabel, overall, CURVES, courseFit } from '../game/ratings.js'
 import { careerPhase, majorNarrative, legacyScore, legacyLabel } from '../game/narrative.js'
 import { equipmentBonus, bagTech, techBaseline, startsToSettle } from '../game/equipment.js'
-import { describeStaff } from '../game/staff.js'
+import { describeStaff, rapportLabel } from '../game/staff.js'
 import { STAFF_ROLES, EQUIP_SLOTS } from '../game/constants.js'
 import { fmtMoney } from '../game/finance.js'
 import { Card, RatingRow, Chip, Stat, StatGrid, Empty, Sparkline } from './ui.jsx'
@@ -145,6 +145,9 @@ export default function PlayerView({ state }) {
                   {role.icon} {role.name}
                 </div>
                 <div className="xs muted-2">{describeStaff(state.staff[role.id])}</div>
+                {state.staff[role.id] ? (
+                  <div className="xs muted-2">{rapportLabel(state.staff[role.id])}</div>
+                ) : null}
               </div>
               <div className="mono xs muted">
                 {state.staff[role.id]

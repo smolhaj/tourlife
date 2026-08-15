@@ -5,10 +5,10 @@
 // engine API and checks invariants after every season.
 
 import * as E from '../src/game/engine.js'
-import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS, CIRCUITS, COURSE_TYPES, PAYOUT_PCT, SPONSOR_CATEGORIES } from '../src/game/constants.js'
+import { ATTR_KEYS, SENIOR_AGE, TRAINING_OPTIONS, CIRCUITS, COURSE_TYPES, PAYOUT_PCT, SPONSOR_CATEGORIES, STAFF_ROLES } from '../src/game/constants.js'
 import { overall, progressYear, emptyRatings } from '../src/game/ratings.js'
 import { simTournament, makeEntrant } from '../src/game/tournament.js'
-import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf } from '../src/game/staff.js'
+import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf, effectiveQ, rapport } from '../src/game/staff.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney, debtInterest, backerOffer, splitPrize } from '../src/game/finance.js'
@@ -17,7 +17,7 @@ import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, NORMAL_WIND } from '../src/game/weather.js'
 import { venueEdge, familiarityLabel } from '../src/game/venue.js'
 import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
-import { CUPS, CUP_WEEK, cupForYear, recordText, simCup } from '../src/game/teamcup.js'
+import { CUPS, CUP_WEEK, cupForYear, recordText, selectTeam, simCup } from '../src/game/teamcup.js'
 import { REGIONS } from '../src/game/names.js'
 
 const tourAvgOvr = (s) => {
@@ -844,26 +844,34 @@ section('SCENARIO 17 — what the Team screen claims quality buys is true')
   // from the functions they describe without anything failing. Pin the
   // identities the wording is built on: if one of these fails, the sentence in
   // staff.js needs rewriting, not the assertion relaxing.
+  // The claims are about what somebody is worth to you *today*, which is their
+  // rating adjusted for how long they have worked for you — so the identities
+  // are pinned against effectiveQ, exactly as the Team screen renders them.
   const q = 0.62
-  const coach = { coach: { q, trait: 'putting', traitAttr: 'putting' }, caddie: null, psych: null, physio: null, agent: null }
+  const years = 4
+  const coachMan = { q, trait: 'putting', traitAttr: 'putting', yearsWithYou: years }
+  const eq = effectiveQ(coachMan)
+  const coach = { coach: coachMan, caddie: null, psych: null, physio: null, agent: null }
   check('coach: quality x 0.85 outside their specialty',
-    Math.abs(coachTrainingBonus(coach, 'irons') - q * 0.85) < 1e-9,
-    `${coachTrainingBonus(coach, 'irons')} vs ${q * 0.85}`)
+    Math.abs(coachTrainingBonus(coach, 'irons') - eq * 0.85) < 1e-9,
+    `${coachTrainingBonus(coach, 'irons')} vs ${eq * 0.85}`)
   check('coach: +0.55 more inside it',
-    Math.abs(coachTrainingBonus(coach, 'putting') - (q * 0.85 + 0.55)) < 1e-9,
-    `${coachTrainingBonus(coach, 'putting')} vs ${q * 0.85 + 0.55}`)
+    Math.abs(coachTrainingBonus(coach, 'putting') - (eq * 0.85 + 0.55)) < 1e-9,
+    `${coachTrainingBonus(coach, 'putting')} vs ${eq * 0.85 + 0.55}`)
 
   const ordinary = { isMajor: false, flagship: false }
-  const cad = staffMatchdayEffect({ caddie: { q, trait: 'none' }, psych: null }, ordinary)
-  check('caddie: quality x 0.8 in playing quality', Math.abs(cad.quality - q * 0.8) < 1e-9, `${cad.quality} vs ${q * 0.8}`)
-  check('caddie: variance cut by quality x 7%', Math.abs(cad.sigmaMult - (1 - q * 0.07)) < 1e-9,
-    `${cad.sigmaMult} vs ${1 - q * 0.07}`)
+  const cadMan = { q, trait: 'none', yearsWithYou: years }
+  const cad = staffMatchdayEffect({ caddie: cadMan, psych: null }, ordinary)
+  check('caddie: quality x 0.8 in playing quality', Math.abs(cad.quality - eq * 0.8) < 1e-9, `${cad.quality} vs ${eq * 0.8}`)
+  check('caddie: variance cut by quality x 7%', Math.abs(cad.sigmaMult - (1 - eq * 0.07)) < 1e-9,
+    `${cad.sigmaMult} vs ${1 - eq * 0.07}`)
 
-  const psy = staffMatchdayEffect({ caddie: null, psych: { q, trait: 'none' } }, ordinary)
-  check('psych: quality x 0.5 on an ordinary week', Math.abs(psy.quality - q * 0.5) < 1e-9, `${psy.quality} vs ${q * 0.5}`)
-  const psyMajor = staffMatchdayEffect({ caddie: null, psych: { q, trait: 'none' } }, { isMajor: true, flagship: false })
-  check('psych: 1.8x that in a major', Math.abs(psyMajor.quality - q * 0.5 * 1.8) < 1e-9,
-    `${psyMajor.quality} vs ${q * 0.5 * 1.8}`)
+  const psyMan = { q, trait: 'none', yearsWithYou: years }
+  const psy = staffMatchdayEffect({ caddie: null, psych: psyMan }, ordinary)
+  check('psych: quality x 0.5 on an ordinary week', Math.abs(psy.quality - eq * 0.5) < 1e-9, `${psy.quality} vs ${eq * 0.5}`)
+  const psyMajor = staffMatchdayEffect({ caddie: null, psych: psyMan }, { isMajor: true, flagship: false })
+  check('psych: 1.8x that in a major', Math.abs(psyMajor.quality - eq * 0.5 * 1.8) < 1e-9,
+    `${psyMajor.quality} vs ${eq * 0.5 * 1.8}`)
 
   // Physio's claim is about progressYear's decline shield, not a staff.js call.
   const ratings = {}
@@ -1061,9 +1069,16 @@ section('SCENARIO 19 — endorsement money is the size it is in real life')
   // The old endorsement curve was explosive at the top, so one generational
   // player out-earned an equally decorated peer several times over. Careers
   // this similar must land in the same place.
-  check('two careers at world no.1 earn comparably',
-    richest.cash < leanest.cash * 4,
-    `${fmtMoney(richest.cash)} vs ${fmtMoney(leanest.cash)}`)
+  // Money must scale with the career, not explode in it. Comparing raw totals
+  // is the wrong test — one of these four usually wins 90-odd times and another
+  // wins 24, and those are not the same career. What has to hold is that the
+  // rate is similar: the old bug paid a generational player several times what
+  // an equally decorated peer got for the same record.
+  const perCareer = (e) => e.cash / Math.max(1, e.majors * 4 + e.wins)
+  const rates = elite.map(perCareer)
+  const spread = Math.max(...rates) / Math.max(1, Math.min(...rates))
+  check('endorsement money scales with a career rather than exploding in it', spread < 3,
+    `${(Math.max(...rates) / 1e6).toFixed(1)}m vs ${(Math.min(...rates) / 1e6).toFixed(1)}m per career point`)
   // And the ladder is real: peaking in the top ten is not the same career.
   const alsoRan = elite.filter((e) => e.bestRank > 3)
   if (alsoRan.length) {
@@ -1453,7 +1468,32 @@ section('SCENARIO 24 — the week that pays nothing')
   }
   check('the cups were played every season', s.cupHistory.length === 12, `${s.cupHistory.length} cups`)
   check('every cup was won by somebody', s.cupHistory.every((h) => h.winner), '')
-  check('a good American player gets capped', s.career.teamCaps > 0, `${s.career.teamCaps} caps`)
+  // Selection follows the ranking, so the honest test is "were you good enough
+  // to be picked" — not "did this seed happen to produce a top-ten career".
+  const wasTopTen = s.career.seasons.some((x) => (x.rankEnd || 999) <= 10)
+  if (wasTopTen) check('a top-ten player gets capped', s.career.teamCaps > 0, `${s.career.teamCaps} caps`)
+  else check('a player who never cracked the top ten is not capped on merit alone',
+    s.career.teamCaps === 0 || s.career.teamPicks === s.career.teamCaps,
+    `${s.career.teamCaps} caps, best rank #${s.career.bestRank}`)
+
+  // The mechanism itself, tested directly rather than through a whole career.
+  {
+    const rng = new Rng(4001)
+    const pool = Array.from({ length: 60 }, (_, i) => ({
+      pid: i + 1, name: `R${i}`, region: 'usa', rank: i + 1, form: 0, retired: false,
+    }))
+    const side = selectTeam(pool, CUPS.continental.home, rng)
+    check('a cup side is twelve', side.length === 12, `${side.length}`)
+    const autos = side.filter((e) => !e.pick)
+    check('the ten best ranked qualify automatically',
+      autos.length === 10 && autos.every((e) => e.player.rank <= 10),
+      autos.map((e) => e.player.rank).join(','))
+    const picks = side.filter((e) => e.pick)
+    check("the captain's two picks come from outside those ten",
+      picks.length === 2 && picks.every((e) => e.player.rank > 10),
+      picks.map((e) => e.player.rank).join(','))
+    check('nobody is picked twice', new Set(side.map((e) => e.player.pid)).size === 12)
+  }
   const r = s.career.teamRecord
   check('the team record adds up to matches played', r.w + r.l + r.h >= s.career.teamCaps * 4,
     `${recordText(r)} from ${s.career.teamCaps} caps`)
@@ -1535,6 +1575,63 @@ section('SCENARIO 25 — the rest of the world is mortal too')
     `tour average ${startOvr.toFixed(1)} → ${endOvr.toFixed(1)} over ${(weeks / 44).toFixed(0)} seasons`)
   console.log(`   ${outPct.toFixed(1)}% of the tour sidelined at any moment, ${hurtPct.toFixed(1)}% carrying something`)
   console.log(`   tour average overall ${startOvr.toFixed(1)} → ${endOvr.toFixed(1)} across ${(weeks / 44).toFixed(0)} seasons`)
+}
+
+section('SCENARIO 26 — the man on the bag knows your misses')
+{
+  // yearsWithYou was stamped on every hire and read by nothing, so a caddie of
+  // ten years was worth exactly what a stranger of the same rating was worth.
+  const man = (q, y) => ({ q, yearsWithYou: y, trait: 'none' })
+  check('a new hire is worth less than their rating', effectiveQ(man(0.6, 0)) < 0.6, `${effectiveQ(man(0.6, 0))}`)
+  check('a long server is worth more', effectiveQ(man(0.6, 8)) > 0.6, `${effectiveQ(man(0.6, 8))}`)
+  check('rapport stops growing eventually', effectiveQ(man(0.6, 8)) === effectiveQ(man(0.6, 30)))
+  check('rapport is monotonic in tenure',
+    [0, 1, 2, 3, 4, 5, 6].every((y, i, a) => i === 0 || effectiveQ(man(0.6, y)) > effectiveQ(man(0.6, a[i - 1]))))
+  check('nobody has rapport with a vacancy', effectiveQ(null) === 0 && rapport(null) === 0)
+
+  // The point of it: a modest upgrade on paper is a downgrade on the day.
+  const ev = { isMajor: false, flagship: false }
+  const settled = staffMatchdayEffect({ caddie: man(0.6, 8), psych: null }, ev).quality
+  const poached = staffMatchdayEffect({ caddie: man(0.7, 0), psych: null }, ev).quality
+  check('swapping a settled caddie for a better stranger costs you at first', poached < settled,
+    `${poached.toFixed(3)} vs ${settled.toFixed(3)}`)
+  let overtakeYear = 0
+  while (overtakeYear < 20 && staffMatchdayEffect({ caddie: man(0.7, overtakeYear), psych: null }, ev).quality <= settled) {
+    overtakeYear += 1
+  }
+  check('but a genuinely better hire does overtake', overtakeYear < 20, `${overtakeYear}`)
+  check('and it takes years, not weeks', overtakeYear >= 2, `${overtakeYear}`)
+  console.log(`   a settled 60 beats a fresh 70 for ${overtakeYear} seasons before the swap pays off`)
+
+  // A really big upgrade should still be worth taking immediately.
+  const star = staffMatchdayEffect({ caddie: man(0.95, 0), psych: null }, ev).quality
+  check('a large upgrade is worth taking straight away', star > settled, `${star.toFixed(3)} vs ${settled.toFixed(3)}`)
+
+  // Tenure has to actually accrue over a career, and survive a save.
+  const s = E.newGame({ name: 'Loyal', seed: 8080, talent: 0.68, age: 22 })
+  E.autoOffseason(s)
+  const firstTeam = STAFF_ROLES.map((r) => s.staff[r.id]).filter(Boolean)
+  check('a brand new team starts on zero', firstTeam.every((m) => (m.yearsWithYou || 0) === 0),
+    firstTeam.map((m) => m.yearsWithYou).join(','))
+  E.startSeason(s)
+  E.simToOffseason(s)
+  const afterOne = STAFF_ROLES.map((r) => s.staff[r.id]).filter(Boolean)
+  check('a season together counts as a season', afterOne.every((m) => (m.yearsWithYou || 0) >= 1),
+    afterOne.map((m) => m.yearsWithYou).join(','))
+  for (let i = 0; i < 5; i++) {
+    E.autoOffseason(s)
+    if (s.player.retired) break
+    E.startSeason(s)
+    E.simToOffseason(s)
+  }
+  const tenures = STAFF_ROLES.map((r) => s.staff[r.id]).filter(Boolean).map((m) => m.yearsWithYou || 0)
+  check('somebody has been kept on', tenures.some((t) => t >= 2), tenures.join(','))
+  check('nobody has more tenure than seasons played', Math.max(...tenures, 0) <= s.career.seasons.length,
+    `${Math.max(...tenures, 0)} vs ${s.career.seasons.length} seasons`)
+  const back = importSave(exportSave(s))
+  check('tenure survives a save',
+    STAFF_ROLES.every((r) => (back.staff[r.id]?.yearsWithYou ?? null) === (s.staff[r.id]?.yearsWithYou ?? null)))
+  console.log(`   after ${s.career.seasons.length} seasons the team's tenures are ${tenures.join(', ')}`)
 }
 
 // ---------------------------------------------------------------------------

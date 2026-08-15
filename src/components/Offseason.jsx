@@ -10,7 +10,7 @@ import {
 import { Q_SCHOOL_FEE, cardStatus, CARD_LABELS } from '../game/eligibility.js'
 import { fmtMoney, DEBT_INTEREST } from '../game/finance.js'
 import { techBaseline, SETTLE_LABEL } from '../game/equipment.js'
-import { coachTrainingBonus, qualityOf, qualityEffect, qualityBand } from '../game/staff.js'
+import { coachTrainingBonus, qualityOf, qualityEffect, qualityBand, effectiveQ, rapport, rapportLabel } from '../game/staff.js'
 import { ratingTextColor } from '../game/ratings.js'
 import { marketability } from '../game/sponsors.js'
 import { plural } from '../game/narrative.js'
@@ -539,7 +539,11 @@ function StaffMarket({ state, actions }) {
               const isCurrent = current && current.id === c.id
               const affordable = role === 'agent' || state.finance.cash > c.salary * 0.5
               const q = qualityOf(c)
-              const diff = current ? q - qualityOf(current) : null
+              // Compared against what the person you have is actually worth
+              // today, not their contract number — and a new hire lands below
+              // their own rating for the first couple of seasons.
+              const asHired = Math.round(effectiveQ({ ...c, yearsWithYou: 0 }) * 100)
+              const diff = current ? asHired - Math.round(effectiveQ(current) * 100) : null
               return (
                 <Option
                   key={c.id}
@@ -555,11 +559,11 @@ function StaffMarket({ state, actions }) {
                           {q}
                         </span>
                         <span className="xs muted-2"> quality</span>
-                        {diff !== null && diff !== 0 ? (
-                          <span className={`xs ${diff > 0 ? 'delta-up' : 'delta-down'}`}>
+                        {diff !== null && diff !== 0 && !isCurrent ? (
+                          <span className={`xs ${diff > 0 ? 'delta-up' : 'delta-down'}`} title="from day one, allowing for the settling-in period">
                             {' '}
                             {diff > 0 ? '+' : ''}
-                            {diff}
+                            {diff} day one
                           </span>
                         ) : null}
                       </span>
@@ -583,14 +587,25 @@ function StaffMarket({ state, actions }) {
             <div className="b" style={{ marginBottom: 2 }}>
               {current ? (
                 <>
-                  What {current.name} is worth to you, at quality{' '}
-                  <span className={ratingTextColor(qualityOf(current))}>{qualityOf(current)}</span>
+                  What {current.name} is worth to you today, at an effective quality of{' '}
+                  <span className={ratingTextColor(Math.round(effectiveQ(current) * 100))}>
+                    {Math.round(effectiveQ(current) * 100)}
+                  </span>{' '}
+                  <span className="muted-2">
+                    ({qualityOf(current)} on paper{rapport(current) >= 0 ? ' + ' : ' − '}
+                    {Math.abs(Math.round(rapport(current) * 100))} for {rapportLabel(current).toLowerCase()})
+                  </span>
                 </>
               ) : (
                 `What a well-regarded ${roleDef.name.toLowerCase()} would be worth, at quality 62`
               )}
             </div>
-            {qualityEffect(role, current ? current.q : 0.62)}
+            {qualityEffect(role, current ? effectiveQ(current) : 0.62)}
+            <div style={{ marginTop: 6 }}>
+              Nobody is worth their rating on day one. A new hire plays ten points below it while you learn each
+              other and reaches twelve above it after six seasons together, so an upgrade on paper has to be a real
+              upgrade to be worth making.
+            </div>
           </div>
         </Card>
         <div className="col">
@@ -612,11 +627,20 @@ function StaffMarket({ state, actions }) {
                     )}
                   </div>
                   {s ? (
-                    <div className="xs muted">
-                      {s.flag} {s.name} · quality{' '}
-                      <b className={ratingTextColor(qualityOf(s))}>{qualityOf(s)}</b> · {s.tierLabel} · {s.traitLabel} ·{' '}
-                      {r.id === 'agent' ? `${Math.round(s.cut * 100)}% cut` : `${fmtMoney(s.salary, { compact: true })}/yr`}
-                    </div>
+                    <>
+                      <div className="xs muted">
+                        {s.flag} {s.name} · quality{' '}
+                        <b className={ratingTextColor(Math.round(effectiveQ(s) * 100))}>
+                          {Math.round(effectiveQ(s) * 100)}
+                        </b>
+                        {Math.round(effectiveQ(s) * 100) !== qualityOf(s) ? (
+                          <span className="muted-2"> (of {qualityOf(s)})</span>
+                        ) : null}{' '}
+                        · {s.tierLabel} · {s.traitLabel} ·{' '}
+                        {r.id === 'agent' ? `${Math.round(s.cut * 100)}% cut` : `${fmtMoney(s.salary, { compact: true })}/yr`}
+                      </div>
+                      <div className="xs muted-2">{rapportLabel(s)}</div>
+                    </>
                   ) : (
                     <div className="xs muted-2">{r.blurb}</div>
                   )}

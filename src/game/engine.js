@@ -7,6 +7,7 @@ import {
   TRAINING_OPTIONS,
   WINTER_WORK_PAY,
   lifestyleById,
+  STAFF_ROLES,
   TRAVEL_COST,
 } from './constants.js'
 import { makeRatings, overall, progressYear, jigglePotential } from './ratings.js'
@@ -48,6 +49,7 @@ import {
   staffMatchdayEffect,
   coachTrainingBonus,
   staffQuality,
+  effectiveQ,
 } from './staff.js'
 import {
   starterBag,
@@ -1456,6 +1458,13 @@ function prepareOffseason(state, isFirst, rng) {
     0,
     1,
   )
+  // Another season together. Anyone hired during the offseason that follows
+  // starts at zero, which is the point.
+  for (const role of STAFF_ROLES) {
+    const member = state.staff[role.id]
+    if (member) member.yearsWithYou = (member.yearsWithYou || 0) + 1
+  }
+
   const taken = new Set(state.world.players.map((x) => x.name))
   state.staffMarket = generateStaffMarket(rng, rep, taken)
   state.equipCatalog = generateEquipmentCatalog(rng, state.yearsElapsed + 1, state.year + 1)
@@ -1862,7 +1871,11 @@ function autoHireStaff(state) {
     const market = state.staffMarket?.[role] || []
     const current = state.staff[role]
     for (const cand of market) {
-      if (current && cand.q <= current.q + 0.06) continue
+      // Judge the swap the way the simulation will: what the candidate is
+      // worth on day one against what the incumbent is worth now. A settled
+      // caddie is worth more than his rating and a new one is worth less, so
+      // a couple of points on paper is not a reason to change anybody.
+      if (current && effectiveQ({ ...cand, yearsWithYou: 0 }) <= effectiveQ(current) + 0.02) continue
       const extra = (cand.salary || 0) - (current?.salary || 0)
       if (spent + extra > budget) continue
       state.staff[role] = { ...cand, yearsWithYou: 0 }

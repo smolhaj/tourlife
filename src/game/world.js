@@ -294,9 +294,19 @@ export function progressWorld(world, rng, year) {
     if (p.age >= 40) retireChance += (p.age - 39) * 0.006
     if (ovr < 34) retireChance += 0.25
     if (p.age >= 44 && ovr < 44) retireChance += 0.05
-    if (p.age >= 56) retireChance += (p.age - 55) * 0.045
-    if (p.age >= 63) retireChance += 0.25
-    if (p.age >= 70) retireChance = 1
+    // The old curve emptied the senior tour: almost nobody survived past 62,
+    // so a circuit that advertises 78-player fields was running on a pool of
+    // about thirty — and once injuries started taking a share of those, fields
+    // fell to nineteen. Real senior tours are full because a fifty-five-year-old
+    // who can still play has every reason to keep playing.
+    if (p.age >= 58) retireChance += (p.age - 57) * 0.028
+    if (p.age >= 66) retireChance += 0.2
+    if (p.age >= 72) retireChance = 1
+    // Turning fifty is a change of tour, not a retirement. Anybody who can
+    // still play goes and plays the Senior Circuit, which is the only reason
+    // that circuit has a field at all — it has no pool of its own, it is
+    // entirely the tail of everyone else's career.
+    if (p.age >= SENIOR_AGE && p.age < 66 && ovr >= 40) retireChance = Math.min(retireChance, 0.06)
     // Mini-tour players give up much sooner than tour pros.
     if (p.homeCircuit === 'amateur') {
       retireChance += 0.1 + Math.max(0, p.age - 27) * 0.06
