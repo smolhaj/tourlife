@@ -43,6 +43,7 @@ import {
   starterBag,
   generateEquipmentCatalog,
   equipmentBonus,
+  equipItem,
   sponsorGear,
 } from './equipment.js'
 import {
@@ -258,7 +259,7 @@ function emptySeasonTotals() {
 /** Ratings actually used on the course: base + gear − whatever is wrong with you. */
 export function computeEffRatings(state) {
   const base = state.player.ratings
-  const gear = equipmentBonus(state.bag, state.yearsElapsed)
+  const gear = equipmentBonus(state.bag, state.yearsElapsed, state.career.starts)
   const hurt = ailmentPenalty(state.player.injury)
   const out = {}
   for (const k of ATTR_KEYS) {
@@ -1527,7 +1528,7 @@ export function startSeason(state) {
   // Equipment sponsors keep you in their gear.
   const gearDeal = state.sponsors.deals.find((d) => d.providesGear && d.yearsLeft > 0)
   if (gearDeal) {
-    state.bag = sponsorGear(rng, gearDeal.brand, gearDeal.gearQuality, state.yearsElapsed, state.year)
+    state.bag = sponsorGear(rng, gearDeal.brand, gearDeal.gearQuality, state.yearsElapsed, state.year, state.career.starts, state.bag)
     pushNews(state, `${gearDeal.brand} shipped your new bag for the season.`, 'info')
   }
 
@@ -1729,6 +1730,9 @@ function autoHireStaff(state) {
   }
 }
 
+/** Tech points of upgrade needed before the auto-buyer will change a club. */
+const WORTH_SWITCHING_FOR = 4
+
 function autoBuyEquipment(state) {
   const gearDeal = state.sponsors.deals.find((d) => d.providesGear && d.yearsLeft > 0)
   if (gearDeal) return
@@ -1737,8 +1741,10 @@ function autoBuyEquipment(state) {
   for (const slot of Object.keys(state.equipCatalog || {})) {
     const best = state.equipCatalog[slot][0]
     const cur = state.bag[slot]
-    if (best && (!cur || best.tech > cur.tech + 1) && spent + best.price <= budget) {
-      state.bag[slot] = { ...best }
+    // Swapping a club costs you strokes while you learn it, so a marginal
+    // upgrade is not one. The auto-buyer holds out for a real gain.
+    if (best && (!cur || best.tech > cur.tech + WORTH_SWITCHING_FOR) && spent + best.price <= budget) {
+      state.bag[slot] = equipItem(best, slot, state.bag, state.career.starts)
       spent += best.price
     }
   }
@@ -1785,7 +1791,7 @@ export function buyEquipment(state, slot, itemId) {
   if (!item) return state
   if (state.finance.cash < item.price) return state
   state.finance.cash -= item.price
-  state.bag[slot] = { ...item }
+  state.bag[slot] = equipItem(item, slot, state.bag, state.career.starts)
   refreshDerived(state)
   return state
 }

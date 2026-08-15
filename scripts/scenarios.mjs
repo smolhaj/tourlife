@@ -16,6 +16,7 @@ import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/spo
 import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, NORMAL_WIND } from '../src/game/weather.js'
 import { venueEdge, familiarityLabel } from '../src/game/venue.js'
+import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
 
 const COURSE_TYPE_LIST = Object.keys(COURSE_TYPES)
 const clamp01to99 = (v) => clamp(v, 1, 99)
@@ -1018,7 +1019,7 @@ section('SCENARIO 19 — endorsement money is the size it is in real life')
   check('a full book of logos gets no further offers', stacked.length === 0, `${stacked.length} offered`)
 
   // And a whole career lands somewhere a person could believe.
-  let worst = null
+  const elite = []
   for (let seed = 0; seed < 4; seed++) {
     const s = E.newGame({ name: 'Great', seed: 6100 + seed * 401, talent: 0.86, age: 21 })
     while (!s.player.retired && s.player.age < 46) {
@@ -1027,14 +1028,45 @@ section('SCENARIO 19 — endorsement money is the size it is in real life')
       E.startSeason(s)
       E.simToOffseason(s)
     }
-    if (!worst || s.finance.cash > worst.cash) worst = { cash: s.finance.cash, majors: s.career.majors, wins: s.career.wins }
+    elite.push({
+      cash: s.finance.cash,
+      majors: s.career.majors,
+      wins: s.career.wins,
+      bestRank: s.career.bestRank ?? 999,
+      endorse: s.career.endorsementTotal,
+    })
   }
-  // Tiger's lifetime net worth is about $1bn off 15 majors. Ours may exceed it
-  // for a career that exceeds his, but not by an order of magnitude.
-  const ceiling = 400_000_000 + worst.majors * 120_000_000
-  check('the richest career is not absurd', worst.cash < ceiling,
-    `${fmtMoney(worst.cash)} off ${worst.majors} majors and ${worst.wins} wins`)
-  console.log(`   richest of four elite careers: ${fmtMoney(worst.cash, { compact: true })} off ${worst.majors} majors, ${worst.wins} wins`)
+  const richest = elite.reduce((a, b) => (b.cash > a.cash ? b : a))
+  // Not every gifted prospect gets to the top — one of these four usually
+  // peaks in the teens. Compare the ones who actually got there.
+  const atTheTop = elite.filter((e) => e.bestRank === 1)
+  const leanest = atTheTop.length ? atTheTop.reduce((a, b) => (b.cash < a.cash ? b : a)) : richest
+  // Tiger's lifetime net worth is about $1bn. A career at world no.1 for a
+  // decade may exceed it, but not by an order of magnitude.
+  //
+  // This used to scale the ceiling with majors, which is the wrong model of
+  // the game's own economics: marketability is driven by ranking, so these
+  // four careers land within 25% of each other on anything from two majors to
+  // seven. Keyed on majors, the test passed or failed on which seed happened
+  // to produce the most trophies.
+  check('the richest career is not absurd', richest.cash < 1_300_000_000,
+    `${fmtMoney(richest.cash)} off ${richest.majors} majors and ${richest.wins} wins`)
+  // The old endorsement curve was explosive at the top, so one generational
+  // player out-earned an equally decorated peer several times over. Careers
+  // this similar must land in the same place.
+  check('two careers at world no.1 earn comparably',
+    richest.cash < leanest.cash * 4,
+    `${fmtMoney(richest.cash)} vs ${fmtMoney(leanest.cash)}`)
+  // And the ladder is real: peaking in the top ten is not the same career.
+  const alsoRan = elite.filter((e) => e.bestRank > 3)
+  if (alsoRan.length) {
+    const best = alsoRan.reduce((a, b) => (b.cash > a.cash ? b : a))
+    check('never quite getting there costs you most of the money', best.cash < leanest.cash * 0.6,
+      `${fmtMoney(best.cash)} at best rank #${best.bestRank} vs ${fmtMoney(leanest.cash)} at #1`)
+  }
+  console.log(
+    `   four elite careers: ${elite.map((e) => `${fmtMoney(e.cash, { compact: true })}/${e.majors}maj/#${e.bestRank}`).join(', ')}`,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -1271,6 +1303,62 @@ section('SCENARIO 22 — horses for courses')
   const regular = finishAt(venueEdge(8, 2))
   check('knowing the course shows up in the score', regular < stranger, `${regular.toFixed(2)} vs ${stranger.toFixed(2)}`)
   console.log(`   same player, same course: ${stranger.toFixed(2)} as a stranger, ${regular.toFixed(2)} as a regular`)
+}
+
+section('SCENARIO 23 — a new club has to be earned')
+{
+  const s = E.newGame({ name: 'Gearhead', seed: 4242, talent: 0.6, age: 22 })
+  const yrs = s.yearsElapsed
+  const before = { ...s.effRatings }
+  check('the bag you have always played needs no bedding in',
+    beddingIn(s.bag, s.career.starts).length === 0, JSON.stringify(beddingIn(s.bag, s.career.starts)))
+
+  // Drop a genuinely better putter in the bag mid-career and it costs you first.
+  const fresh = equipItem({ ...s.bag.putter, tech: s.bag.putter.tech + 6 }, 'putter', s.bag, s.career.starts)
+  s.bag = { ...s.bag, putter: fresh }
+  E.refreshDerived(s)
+  check('a brand new putter is worse than the one you trusted', s.effRatings.putting < before.putting,
+    `${s.effRatings.putting} vs ${before.putting}`)
+  const settling = beddingIn(s.bag, s.career.starts)
+  check('the game says which club is settling', settling.length === 1 && settling[0].slot === 'putter',
+    JSON.stringify(settling))
+
+  // Play enough tournaments with it and it becomes the upgrade it always was.
+  s.career.starts += 10
+  E.refreshDerived(s)
+  check('a bedded-in upgrade is an upgrade', s.effRatings.putting > before.putting,
+    `${s.effRatings.putting} vs ${before.putting}`)
+  check('and it has stopped settling', beddingIn(s.bag, s.career.starts).length === 0)
+
+  // A marginal upgrade is not worth the disruption; a real one is.
+  const bagWith = (delta) => ({ ...s.bag, irons: equipItem({ ...s.bag.irons, tech: s.bag.irons.tech + delta }, 'irons', s.bag, 0) })
+  const ironsAt = (bag, starts) => equipmentBonus(bag, yrs, starts).irons || 0
+  const settledOld = ironsAt(s.bag, 999)
+  check('a one-point upgrade is a loss on the day you make it',
+    ironsAt(bagWith(1), 0) < settledOld, `${ironsAt(bagWith(1), 0).toFixed(2)} vs ${settledOld.toFixed(2)}`)
+  check('a big upgrade still costs you on the day you make it',
+    ironsAt(bagWith(12), 0) < ironsAt(bagWith(12), 999),
+    `${ironsAt(bagWith(12), 0).toFixed(2)} vs ${ironsAt(bagWith(12), 999).toFixed(2)}`)
+  // The clubs you feel take longer than the one you just hit.
+  check('a putter takes longer to trust than a driver',
+    startsToSettle({ addedAt: 0 }, 'putter', 3) > startsToSettle({ addedAt: 0 }, 'driver', 3))
+  console.log(`   settled irons ${settledOld.toFixed(2)} → brand new +1 tech ${ironsAt(bagWith(1), 0).toFixed(2)} → brand new +12 tech ${ironsAt(bagWith(12), 0).toFixed(2)}`)
+
+  // Signing an equipment deal replaces every club at once, and that is felt.
+  const s2 = E.newGame({ name: 'Signed', seed: 909, talent: 0.6, age: 22 })
+  s2.career.starts = 60
+  E.refreshDerived(s2)
+  const settledOvr = s2.ovr
+  s2.bag = sponsorGear(new Rng(5), 'Kestrel', 0.9, s2.yearsElapsed, s2.year, s2.career.starts, s2.bag)
+  E.refreshDerived(s2)
+  const switchedOvr = s2.ovr
+  s2.career.starts += 10
+  E.refreshDerived(s2)
+  check('a whole new bag is a real setback before it is a gain', switchedOvr < settledOvr,
+    `${switchedOvr} vs ${settledOvr}`)
+  check('and top-end sponsor gear is worth having once you can use it', s2.ovr > settledOvr,
+    `${s2.ovr} vs ${settledOvr}`)
+  console.log(`   whole-bag switch: ${settledOvr.toFixed(1)} ovr → ${switchedOvr.toFixed(1)} on day one → ${s2.ovr.toFixed(1)} once bedded in`)
 }
 
 // ---------------------------------------------------------------------------

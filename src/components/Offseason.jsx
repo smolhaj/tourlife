@@ -9,7 +9,7 @@ import {
 } from '../game/constants.js'
 import { Q_SCHOOL_FEE, cardStatus, CARD_LABELS } from '../game/eligibility.js'
 import { fmtMoney, DEBT_INTEREST } from '../game/finance.js'
-import { techBaseline } from '../game/equipment.js'
+import { techBaseline, SETTLE_LABEL } from '../game/equipment.js'
 import { coachTrainingBonus, qualityOf, qualityEffect, qualityBand } from '../game/staff.js'
 import { ratingTextColor } from '../game/ratings.js'
 import { marketability } from '../game/sponsors.js'
@@ -670,7 +670,9 @@ function Equipment({ state, actions }) {
                       onClick={() => actions.buyEquipment(slot.id, item.id)}
                       disabled={!!gearDeal || state.finance.cash < item.price || (cur && cur.id === item.id)}
                       title={`${item.brand} ${item.model}`}
-                      desc={`tech ${item.tech.toFixed(1)} vs ${baseline.toFixed(1)} standard`}
+                      desc={`tech ${item.tech.toFixed(1)} vs ${baseline.toFixed(1)} standard${
+                        cur && cur.id !== item.id ? ` · ${SETTLE_LABEL[slot.id]}` : ''
+                      }`}
                       right={`${fmtMoney(item.price)} · ${gain > 0 ? '+' : ''}${gain.toFixed(1)}`}
                     />
                   )
@@ -685,6 +687,13 @@ function Equipment({ state, actions }) {
           Equipment technology creeps forward about 1.5 points a year across the industry. Gear at the industry
           standard is worth nothing; gear well above it is worth a fraction of a shot; a three-year-old bag is a
           genuine handicap. An equipment sponsorship pays you and fills the bag, but you lose the choice.
+        </div>
+        <div className="small muted" style={{ marginTop: 8 }}>
+          Changing a club costs you before it pays you. A new putter or set of irons takes six or seven
+          competitive starts to trust, and you play worse with it until you do — so chasing every new release is a
+          way to spend a career bedding clubs in. A driver you can more or less tee up and hit. Signing an
+          equipment deal replaces the whole bag at once, which is why the year after one is a common place for a
+          good player to wobble.
         </div>
       </Card>
     </div>
