@@ -1,4 +1,4 @@
-import { CIRCUITS, COURSE_TYPE_KEYS } from './constants.js'
+import { CIRCUITS, COURSE_TYPE_KEYS, TRAVEL_ZONE } from './constants.js'
 
 export const PLAYING_WEEKS = 44
 export const OFFSEASON_WEEK = PLAYING_WEEKS + 1 // weeks 45..48 are the offseason
@@ -60,6 +60,7 @@ export const MAJORS = [
   },
   {
     id: 'maj_links',
+    zone: 'intl',
     name: 'The Open Links Championship',
     shortName: 'Open Links',
     venue: null,
@@ -73,6 +74,7 @@ export const MAJORS = [
   },
   {
     id: 'maj_continental',
+    zone: 'intl',
     name: 'The Continental Championship',
     shortName: 'Continental',
     venue: null,
@@ -271,6 +273,7 @@ export function buildSeason(fixtures, yearsElapsed, rng) {
       flagship: !!f.flagship,
       isMajor: !!f.isMajor,
       seniorMajor: !!f.seniorMajor,
+      zone: f.zone || TRAVEL_ZONE[f.circuit] || 'home',
       blurb: f.blurb,
     }
   })

@@ -9,6 +9,8 @@ import {
   lifestyleById,
   STAFF_ROLES,
   TRAVEL_COST,
+  TRAVEL_ZONE,
+  zoneGap,
 } from './constants.js'
 import { makeRatings, overall, progressYear, jigglePotential } from './ratings.js'
 import { regionById } from './names.js'
@@ -597,6 +599,11 @@ function aiEffRatings(p) {
 
 // ----------------------------------------------------------- event execution
 
+/** The player's quality with no bonuses applied, for sizing the god boost. */
+function baseQuality(p, state, event) {
+  return makeEntrant(p, state.effRatings, event, {}).quality
+}
+
 function runEvent(state, event, rng, { userPlays = false, detailed = false, cache, byPid } = {}) {
   const field = selectField(state, event, rng, userPlays, cache || new Map())
   const entrants = field.map((p) =>
@@ -610,8 +617,21 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
     // What you know about this particular golf course, measured against what a
     // tour regular would know about it.
     const localKnowledge = venueEdgeFor(state.career, event.venue)
+    // Force-win used to add a flat 45 quality points, which is decisive for a
+    // tour winner and not remotely decisive for a mini-tour player in a
+    // 156-man major — the button did nothing for exactly the player most
+    // likely to press it.
+    //
+    // It is now measured against the field, and against the right quantity:
+    // the winner of a big field is not its best player, it is whoever drew
+    // best out of a hundred and fifty-six, which is worth about sixteen shots
+    // on its own. So the boost clears the best player by a wide margin and the
+    // week is played with most of the noise taken out of it.
+    const godEdge = state.godBoost
+      ? Math.max(0, Math.max(...entrants.map((x) => x.quality)) + 80 - baseQuality(p, state, event))
+      : 0
     const e = makeEntrant(p, state.effRatings, event, {
-      qualityBonus: support.quality + moraleEdge + localKnowledge + (state.godBoost || 0),
+      qualityBonus: support.quality + moraleEdge + localKnowledge + godEdge,
       // Nerves are for mortals. Without this the boosted player leads after 54
       // holes, catches the Sunday pressure penalty like anyone else, and can
       // still be run down — which is not what a button called "force win" is
@@ -619,7 +639,10 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
       ignorePressure: !!state.godBoost,
     })
     e.sigma *= support.sigmaMult
-    if (state.godBoost) state.godBoost = 0
+    if (state.godBoost) {
+      e.sigma *= 0.18
+      state.godBoost = 0
+    }
     entrants.push(e)
   }
 
@@ -674,12 +697,32 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
   return outcome
 }
 
+/**
+ * What the flight in costs you, on top of the week itself.
+ *
+ * This used to be a flat +7 for playing a different circuit to last week,
+ * which charged the drive between two domestic stops exactly what it charged
+ * a Florida-to-Kuala-Lumpur redeye. Distance is the thing that hurts, and so
+ * is turning straight round: a week at home in between is most of the cure,
+ * and a fortnight is all of it.
+ */
+export function jetLag(state, event) {
+  const gap = zoneGap(state.lastZonePlayed, event.zone || TRAVEL_ZONE[event.circuit])
+  if (gap <= 0) return 0
+  const weeksSince = state.lastPlayedWeek ? state.week - state.lastPlayedWeek : 99
+  const adjusted = weeksSince >= 4 ? 0 : weeksSince === 3 ? 0.25 : weeksSince === 2 ? 0.6 : 1
+  return 11 * gap * adjusted
+}
+
 function fatigueCost(state, event, p) {
   const base = { amateur: 6, emerging: 8, asian: 12, intl: 12, domestic: 10, major: 13, senior: 8 }[event.circuit] || 10
   let cost = base
   if (p.isUser) {
     const last = state.lastCircuitPlayed
-    if (last && last !== event.circuit) cost += 7 // circuit hopping is brutal
+    // A different tour in the same part of the world is a change of routine;
+    // a different continent is a change of body clock.
+    if (last && last !== event.circuit) cost += 2
+    cost += jetLag(state, event)
     cost *= 1 - staffQuality(state.staff, 'physio') * 0.28
     cost *= 1 + (lifestyleById(state.finance.lifestyle).burnout || 0)
     if (p.age > 40) cost *= 1 + (p.age - 40) * 0.03
@@ -764,6 +807,8 @@ function runTeamCup(state, rng) {
   p.fatigue = clamp(p.fatigue + 11, 0, 100)
   p.morale = clamp(p.morale + (won ? 9 : row.w >= 3 ? 4 : -3), 0, 100)
   state.lastCircuitPlayed = 'team'
+  state.lastZonePlayed = 'home'
+  state.lastPlayedWeek = CUP_WEEK
 
   pushLog(state, {
     week: CUP_WEEK,
@@ -923,6 +968,8 @@ function recordUserResult(state, event, outcome, rng, byPid) {
     isMajor: !!event.isMajor,
   })
   state.lastCircuitPlayed = event.circuit
+  state.lastZonePlayed = event.zone || TRAVEL_ZONE[event.circuit] || 'home'
+  state.lastPlayedWeek = event.week
   state.lastResult = { ...logRow, leaderboard: outcome.results.slice(0, 20) }
 
   const posText = row.madeCut ? (row.pos === 1 ? 'WON' : `${row.tied ? 'T' : ''}${row.pos}`) : 'MC'
@@ -1675,6 +1722,9 @@ export function startSeason(state) {
   state.offseason = null
   state.lastResult = null
   state.lastCircuitPlayed = null
+  // A whole winter at home clears any body clock.
+  state.lastZonePlayed = null
+  state.lastPlayedWeek = null
 
   // Equipment sponsors keep you in their gear.
   const gearDeal = state.sponsors.deals.find((d) => d.providesGear && d.yearsLeft > 0)
@@ -2134,15 +2184,45 @@ export function autoFillSchedule(state, targetStarts) {
     return n
   }
   // Spread the load first, but if the player asked for a punishing schedule
-  // they get one — the fatigue is the point, not something to protect them from.
+  // Nobody sane alternates continents week to week; they go out, play a swing,
+  // and come home. Without this the auto-schedule interleaved Asia and home by
+  // attractiveness alone and paid the jet lag for it every fortnight — a cost
+  // it was not making an informed decision about, and one that pushed marginal
+  // careers off a cliff.
+  const zoneAt = (week) => {
+    const id = Object.keys(target).find((k) => list.find((e) => e.id === k)?.week === week)
+    if (!id) return null
+    const ev = list.find((e) => e.id === id)
+    return ev ? ev.zone || TRAVEL_ZONE[ev.circuit] || 'home' : null
+  }
+  const hopCost = (ev) => {
+    const zone = ev.zone || TRAVEL_ZONE[ev.circuit] || 'home'
+    let cost = 0
+    for (const dir of [-1, 1]) {
+      for (let w = ev.week + dir; w >= 1 && w <= PLAYING_WEEKS && Math.abs(w - ev.week) <= 2; w += dir) {
+        const other = zoneAt(w)
+        if (!other) continue
+        cost += zoneGap(zone, other) / Math.abs(w - ev.week)
+        break
+      }
+    }
+    return cost
+  }
+
   for (const maxRun of [3, 4, Infinity]) {
-    for (const { ev } of ranked) {
+    // Two passes per run length: coherent weeks first, awkward hops only if
+    // the player asked for more starts than the tidy schedule can supply.
+    for (const maxHop of [0.6, Infinity]) {
+      for (const { ev } of ranked) {
+        if (count >= desired) break
+        if (usedWeeks.has(ev.week)) continue
+        if (runLengthWith(ev.week) > maxRun) continue
+        if (hopCost(ev) > maxHop) continue
+        target[ev.id] = true
+        usedWeeks.add(ev.week)
+        count++
+      }
       if (count >= desired) break
-      if (usedWeeks.has(ev.week)) continue
-      if (runLengthWith(ev.week) > maxRun) continue
-      target[ev.id] = true
-      usedWeeks.add(ev.week)
-      count++
     }
     if (count >= desired) break
   }
@@ -2433,6 +2513,32 @@ export function upcomingSchedule(state, limit = 8) {
     .filter((e) => state.entered[e.id] && e.week >= state.week)
     .sort((a, b) => a.week - b.week)
     .slice(0, limit)
+}
+
+/**
+ * Long-haul weeks in a schedule, so the cost of a plan is visible while it is
+ * still a plan. Returns the events whose flight in will hurt, worst first.
+ */
+export function longHaulWeeks(state, forNext = false) {
+  const season = forNext ? state.nextSeason : state.season
+  const chosen = forNext ? state.nextEntered : state.entered
+  const entered = season.filter((e) => chosen[e.id]).sort((a, b) => a.week - b.week)
+  const out = []
+  let prevZone = null
+  let prevWeek = null
+  for (const ev of entered) {
+    const zone = ev.zone || TRAVEL_ZONE[ev.circuit] || 'home'
+    const gap = zoneGap(prevZone, zone)
+    if (gap > 0 && prevWeek !== null) {
+      const weeksSince = ev.week - prevWeek
+      const adjusted = weeksSince >= 4 ? 0 : weeksSince === 3 ? 0.25 : weeksSince === 2 ? 0.6 : 1
+      const cost = 11 * gap * adjusted
+      if (cost >= 4) out.push({ eventId: ev.id, name: ev.name, week: ev.week, from: prevZone, to: zone, cost, weeksSince })
+    }
+    prevZone = zone
+    prevWeek = ev.week
+  }
+  return out.sort((a, b) => b.cost - a.cost)
 }
 
 /**
