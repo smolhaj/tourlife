@@ -25,6 +25,53 @@ export function netRate({ hasCaddie, agentCut, pos = 20 }) {
   return s.net / 1_000_000
 }
 
+/**
+ * Appearance money.
+ *
+ * Outside the biggest domestic tour — which forbids it — tournaments pay names
+ * to turn up, and for a marketable player it is a large share of what a season
+ * abroad is worth. It is also the only guaranteed money in golf, which makes it
+ * the one thing that can justify a long flight into a weak field when the
+ * ranking points are all at home.
+ *
+ * Nobody is paid to show up until people have heard of them, which is what the
+ * threshold is for.
+ */
+const APPEARANCE_MIN_MARKET = 0.45
+const APPEARANCE_SHARE = 0.18
+
+/** Circuits whose promoters can write the cheque. */
+export function paysAppearanceFees(event) {
+  if (!event || event.isMajor || !event.purse) return false
+  return event.circuit === 'intl' || event.circuit === 'asian'
+}
+
+/**
+ * The fifth promoter to book you this year is not paying what the first paid.
+ * Appearance money is bought novelty, and a player who turns up everywhere has
+ * none left to sell — which is also what stops a marketable career collecting
+ * a seven-figure cheque forty times a season and out-earning the sport.
+ */
+function appearanceSlot(alreadyTaken) {
+  return 1 / (1 + Math.max(0, alreadyTaken) * 0.55)
+}
+
+export function appearanceFee(event, marketability, alreadyTaken = 0) {
+  if (!paysAppearanceFees(event)) return 0
+  const m = marketability || 0
+  if (m < APPEARANCE_MIN_MARKET) return 0
+  // Scaled from the threshold, so the first cheque a player is offered is a
+  // small one rather than an abrupt six figures the week they cross the line.
+  const t = (m - APPEARANCE_MIN_MARKET) / (1.25 - APPEARANCE_MIN_MARKET)
+  const raw = event.purse * APPEARANCE_SHARE * Math.pow(clamp(t, 0, 1), 1.9) * appearanceSlot(alreadyTaken)
+  return raw < 10000 ? 0 : Math.round(raw / 5000) * 5000
+}
+
+/** Appearance money is negotiated by your agent and taxed like any other fee. */
+export function netAppearance(gross, agentCut) {
+  return netEndorsement(gross, agentCut)
+}
+
 /** Endorsement income is taxed too, but nobody takes a caddie cut of it. */
 export function netEndorsement(gross, agentCut) {
   const agent = Math.round(gross * Math.max(0.08, agentCut))
@@ -178,11 +225,26 @@ export function coastStatus(netWorth, burn) {
   return { reached, next, targets, progress: next ? netWorth / next.amount : 1 }
 }
 
-/** Simple compounding on money you are not spending. */
+/**
+ * Compounding on money you are not spending.
+ *
+ * Two things were wrong with the old version, and they only showed up at the
+ * very top: gains were untaxed, and the volatility was wide enough that a
+ * lucky run of years mattered more to a great career's final net worth than
+ * the golf did. A nine-major career could finish at $1.7bn, with most of it
+ * arriving from the portfolio rather than the sport.
+ *
+ * Gains are taxed at a lower rate than income, as they are, and the spread is
+ * narrower — a rich athlete's money is mostly in property and index funds, not
+ * in a single bet. The mean is barely touched; the tail is what needed cutting.
+ */
+export const CAPITAL_GAINS_RATE = TAX_RATE * 0.62
+
 export function investmentReturn(rng, cash) {
   if (cash <= 0) return 0
-  const r = rng.gaussClamped(0.042, 0.1, 2.6)
-  return Math.round(cash * r)
+  const r = rng.gaussClamped(0.042, 0.065, 2.6)
+  const gross = cash * r
+  return Math.round(gross > 0 ? gross * (1 - CAPITAL_GAINS_RATE) : gross)
 }
 
 export function fmtMoney(v, opts = {}) {

@@ -11,7 +11,7 @@ import { simTournament, makeEntrant } from '../src/game/tournament.js'
 import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf, effectiveQ, rapport } from '../src/game/staff.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
-import { fmtMoney, debtInterest, backerOffer, splitPrize } from '../src/game/finance.js'
+import { fmtMoney, debtInterest, backerOffer, splitPrize, appearanceFee, investmentReturn } from '../src/game/finance.js'
 import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
 import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, seasonPhase, NORMAL_WIND } from '../src/game/weather.js'
@@ -1838,6 +1838,68 @@ section('SCENARIO 29 — the ones that do not heal')
   const back = importSave(exportSave(s))
   check('that history survives a save', JSON.stringify(back.career.ailmentHistory) === JSON.stringify(hist))
   console.log(`   14 seasons produced ${total} setbacks: ${Object.entries(hist).map(([k, v]) => `${k} ${v}`).join(', ')}`)
+}
+
+section('SCENARIO 30 — paid to turn up')
+{
+  const ev = (circuit, purse, extra = {}) => ({ circuit, purse, isMajor: false, ...extra })
+  check('the domestic tour does not pay appearance money', appearanceFee(ev('domestic', 9e6), 1.0) === 0)
+  check('nor do majors', appearanceFee(ev('intl', 9e6, { isMajor: true }), 1.0) === 0)
+  check('nor do amateur events', appearanceFee(ev('amateur', 0), 1.0) === 0)
+  check('but international promoters do', appearanceFee(ev('intl', 4.5e6), 0.9) > 0)
+  check('and so do the Asian ones', appearanceFee(ev('asian', 2e6), 0.9) > 0)
+  check('nobody pays an unknown to turn up', appearanceFee(ev('intl', 4.5e6), 0.3) === 0)
+  const ladder = [0.5, 0.7, 0.9, 1.1].map((m) => appearanceFee(ev('intl', 4.5e6), m))
+  check('the fee climbs with your name', ladder.every((v, i) => i === 0 || v > ladder[i - 1]), ladder.join(','))
+  check('a bigger event pays more', appearanceFee(ev('intl', 9e6), 0.9) > appearanceFee(ev('intl', 4.5e6), 0.9))
+
+  // Diminishing within a season, or a marketable player out-earns the sport.
+  const first = appearanceFee(ev('intl', 4.5e6), 1.1, 0)
+  const fifth = appearanceFee(ev('intl', 4.5e6), 1.1, 4)
+  check('the fifth promoter pays less than the first', fifth < first * 0.6, `${fifth} vs ${first}`)
+  let seasonTotal = 0
+  for (let n = 0; n < 16; n++) seasonTotal += appearanceFee(ev('intl', 4.5e6), 1.25, n)
+  check('a whole season of it is a bonus, not a second career', seasonTotal < 6_000_000,
+    fmtMoney(seasonTotal))
+  console.log(`   a generational name: ${fmtMoney(first)} for the first, ${fmtMoney(fifth)} for the fifth, ${fmtMoney(seasonTotal)} across a season abroad`)
+
+  // It reaches the bank, and only for players who have earned a name.
+  const run = (talent) => {
+    const s = E.newGame({ name: 'Name', seed: 5252, talent, age: 22 })
+    for (let i = 0; i < 14; i++) {
+      E.autoOffseason(s)
+      if (s.player.retired) break
+      E.startSeason(s)
+      E.simToOffseason(s)
+    }
+    return s
+  }
+  const star = run(0.86)
+  const nobody = run(0.3)
+  check('a star collects appearance money', (star.career.appearanceTotal || 0) > 0,
+    fmtMoney(star.career.appearanceTotal || 0))
+  check('a nobody collects none', (nobody.career.appearanceTotal || 0) === 0,
+    fmtMoney(nobody.career.appearanceTotal || 0))
+  check('and it is a minority of what a star earns',
+    star.career.appearanceTotal < star.career.careerEarnings,
+    `${fmtMoney(star.career.appearanceTotal)} vs ${fmtMoney(star.career.careerEarnings)} in prize money`)
+  const back = importSave(exportSave(star))
+  check('appearance money survives a save', back.career.appearanceTotal === star.career.appearanceTotal)
+  console.log(`   14 seasons: a star banked ${fmtMoney(star.career.appearanceTotal, { compact: true })} in appearance money, a journeyman ${fmtMoney(nobody.career.appearanceTotal || 0)}`)
+
+  // Investment returns are taxed, and the tail they produced is gone.
+  const grow = (years, start) => {
+    const r = new Rng(404)
+    let cash = start
+    for (let i = 0; i < years; i++) cash += investmentReturn(r, cash)
+    return cash
+  }
+  const grown = grow(25, 100_000_000)
+  check('a hundred million does not become a billion in a career',
+    grown < 260_000_000, fmtMoney(grown))
+  check('but it does grow', grown > 130_000_000, fmtMoney(grown))
+  check('and debt earns nothing', investmentReturn(new Rng(1), -500_000) === 0)
+  console.log(`   $100M invested across 25 seasons becomes ${fmtMoney(grown, { compact: true })} after capital gains tax`)
 }
 
 // ---------------------------------------------------------------------------

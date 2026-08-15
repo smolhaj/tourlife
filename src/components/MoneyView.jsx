@@ -175,6 +175,11 @@ export default function MoneyView({ state, onSetLifestyle }) {
             <Stat k="Career gross" v={fmtMoney(state.career.careerGross, { compact: true })} s="prize money" />
             <Stat k="After fees" v={fmtMoney(state.career.careerEarnings, { compact: true })} />
             <Stat k="Endorsements" v={fmtMoney(state.career.endorsementTotal, { compact: true })} s="net, career" />
+            <Stat
+              k="Appearance money"
+              v={fmtMoney(state.career.appearanceTotal || 0, { compact: true })}
+              s={state.finance.seasonAppearance ? `${fmtMoney(state.finance.seasonAppearance, { compact: true })} this season` : 'paid to turn up abroad'}
+            />
           </StatGrid>
         </Card>
 

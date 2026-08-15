@@ -71,6 +71,9 @@ import {
 import { rollSetback, ailmentPenalty, residualDamage, slumpRecovery, AILMENTS } from './injuries.js'
 import {
   splitPrize,
+  appearanceFee,
+  netAppearance,
+  paysAppearanceFees,
   netEndorsement,
   annualExpenses,
   investmentReturn,
@@ -208,6 +211,7 @@ export function newGame(opts = {}) {
       careerEarnings: 0,
       careerGross: 0,
       endorsementTotal: 0,
+      appearanceTotal: 0,
       bestRank: null,
       weeksAtNo1: 0,
       weeksTop10: 0,
@@ -238,6 +242,8 @@ export function newGame(opts = {}) {
       seasonPrizeGross: 0,
       seasonPrizeNet: 0,
       seasonEndorse: 0,
+      seasonAppearance: 0,
+      appearancesTaken: 0,
       passiveIncome: 0,
       history: [],
     },
@@ -867,6 +873,25 @@ function recordUserResult(state, event, outcome, rng, byPid) {
   // Open-entry mini-tour events cost you money to tee up in.
   if (event.circuit === 'emerging' && cardStatus(state, 'emerging') === 'none') {
     state.finance.cash -= EMERGING_ENTRY_FEE
+  }
+
+  // Appearance money: paid for turning up, whatever you shoot. The only
+  // guaranteed cheque in the sport, and the reason a name flies to a weak
+  // field on the other side of the world.
+  const fee = appearanceFee(event, marketability(p, state.career), state.finance.appearancesTaken || 0)
+  if (fee > 0) {
+    const paid = netAppearance(fee, agentCut(state.staff))
+    state.finance.cash += paid.net
+    state.finance.seasonAppearance += paid.net
+    state.finance.appearancesTaken = (state.finance.appearancesTaken || 0) + 1
+    state.career.appearanceTotal += paid.net
+    pushLog(state, {
+      week: event.week,
+      year: state.year,
+      kind: 'money',
+      text: `${fmtMoney(fee)} appearance fee to tee up at ${withArticle(event.name)}.`,
+      detail: `${fmtMoney(paid.net)} after your agent and the tax.`,
+    })
   }
 
   state.finance.cash += split.net
@@ -1737,6 +1762,8 @@ export function startSeason(state) {
   state.finance.seasonPrizeGross = 0
   state.finance.seasonPrizeNet = 0
   state.finance.seasonEndorse = 0
+  state.finance.seasonAppearance = 0
+  state.finance.appearancesTaken = 0
   p.season = newSeasonStats()
   state.week = 1
   state.phase = 'season'
@@ -2175,7 +2202,7 @@ export function autoFillSchedule(state, targetStarts) {
     if (ev.week < fromWeek) continue
     const elig = checkEligibility(probe, ev)
     if (!elig.ok) continue
-    const score = eventAttractiveness(ev, p)
+    const score = eventAttractiveness(ev, p, marketability(p, state.career))
     const cur = byWeek.get(ev.week)
     if (!cur || score > cur.score) byWeek.set(ev.week, { ev, score })
   }
@@ -2260,10 +2287,13 @@ function defaultTargetStarts(p) {
   return 25
 }
 
-function eventAttractiveness(ev, p) {
+function eventAttractiveness(ev, p, market = 0) {
   const prestige = CIRCUITS[ev.circuit].prestige
   const money = Math.log10(Math.max(1, ev.purse)) / 7
   let score = prestige * 2.2 + money * 1.6 + (ev.isMajor ? 6 : 0) + (ev.flagship ? 0.8 : 0)
+  // Guaranteed money is worth more than the same figure of prize money, which
+  // is the whole reason a name gets on the plane.
+  if (paysAppearanceFees(ev) && market >= 0.45) score += Math.log10(Math.max(1, appearanceFee(ev, market, 0))) / 4
   // An amateur cannot cash a cheque, so there is no point paying entry fees to
   // play for money you are not allowed to keep.
   if (p.status === 'amateur') {

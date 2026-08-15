@@ -3,7 +3,8 @@ import { CIRCUITS, CIRCUIT_ORDER, COURSE_TYPES } from '../game/constants.js'
 import { checkEligibility, CARD_LABELS, cardStatus } from '../game/eligibility.js'
 import { upcomingYear, longHaulWeeks } from '../game/engine.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
-import { fmtMoney } from '../game/finance.js'
+import { fmtMoney, appearanceFee } from '../game/finance.js'
+import { marketability } from '../game/sponsors.js'
 import { plural } from '../game/narrative.js'
 import { familiarityLabel, venueStartsOf, venueWinsOf } from '../game/venue.js'
 import { Card, CircuitChip, Chip } from './ui.jsx'
@@ -49,6 +50,9 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
   const majorsIn = enteredList.filter((e) => e.isMajor).length
   const backToBack = maxConsecutive(enteredList.map((e) => e.week))
   const longHaul = useMemo(() => longHaulWeeks(state, forNext), [state, forNext])
+  // What a promoter would pay you to turn up. Shown at the first-of-season
+  // rate; each one you take that year is worth less than the last.
+  const m = useMemo(() => marketability(state.player, state.career), [state.player, state.career])
 
   return (
     <div className="col">
@@ -158,6 +162,9 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
                         </span>
                         <span className="mono muted-2">
                           {ev.purse ? fmtMoney(ev.purse, { compact: true }) : 'am'}
+                          {appearanceFee(ev, m, 0) > 0 ? (
+                            <span className="gold"> +{fmtMoney(appearanceFee(ev, m, 0), { compact: true })}</span>
+                          ) : null}
                         </span>
                       </button>
                     )
