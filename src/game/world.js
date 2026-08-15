@@ -41,6 +41,7 @@ export function makeAiPlayer(rng, opts = {}) {
     form: rng.gauss(0, 1.6),
     fatigue: 0,
     injury: null,
+    ailments: {},
     homeCircuit,
     propensity: clamp(rng.gauss(0.66, 0.12), 0.35, 0.92),
     rankPoints: 0,
@@ -249,6 +250,8 @@ export function driftForm(players, rng) {
         for (const [k, v] of Object.entries(lasting)) {
           p.ratings[k] = clamp((p.ratings[k] || 0) + v, 1, 99)
         }
+        if (!p.ailments) p.ailments = {}
+        p.ailments[p.injury.id] = (p.ailments[p.injury.id] || 0) + 1
         p.injury = null
       }
       continue
@@ -257,7 +260,7 @@ export function driftForm(players, rng) {
     // three weeks in five, and carrying that through the whole pool costs a
     // random draw per player per week for a change of a third of a percent.
     const care = supportLevel(p)
-    const setback = rollSetback(rng, p, { physio: care, psych: care * 0.8 })
+    const setback = rollSetback(rng, p, { physio: care, psych: care * 0.8, history: p.ailments })
     if (setback) p.injury = setback
   }
 }

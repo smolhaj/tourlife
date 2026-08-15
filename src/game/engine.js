@@ -68,7 +68,7 @@ import {
   marketability,
   negotiate,
 } from './sponsors.js'
-import { rollSetback, ailmentPenalty, residualDamage, AILMENTS } from './injuries.js'
+import { rollSetback, ailmentPenalty, residualDamage, slumpRecovery, AILMENTS } from './injuries.js'
 import {
   splitPrize,
   netEndorsement,
@@ -222,6 +222,7 @@ export function newGame(opts = {}) {
       rivals: [],
       venueWins: {},
       venueStarts: {},
+      ailmentHistory: {},
       teamCaps: 0,
       teamPicks: 0,
       teamCupWins: 0,
@@ -1155,6 +1156,10 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
 
   if (p.injury) {
     p.injury.weeksLeft -= 1
+    // Working on it shortens it. A psychologist cannot lift the yips on a
+    // Tuesday, but the difference between doing the work and not is the
+    // difference between a bad summer and a lost career.
+    p.injury.weeksLeft -= slumpRecovery(rng, p.injury, psych)
     if (p.injury.weeksLeft <= 0) {
       const residual = residualDamage(p.injury, rng, physio)
       const lostBits = []
@@ -1166,8 +1171,15 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
         week: state.week,
         year: state.year,
         kind: 'recovery',
-        text: `Cleared to play again after ${plural(p.injury.weeksTotal, 'week')} out (${p.injury.name}).`,
-        detail: lostBits.length ? 'You are not quite the same player who went down.' : 'No lasting damage.',
+        text:
+          p.injury.kind === 'slump'
+            ? `It has lifted — ${plural(p.injury.weeksTotal, 'week')} of ${p.injury.name.toLowerCase()}.`
+            : `Cleared to play again after ${plural(p.injury.weeksTotal, 'week')} out (${p.injury.name}).`,
+        detail: lostBits.length
+          ? 'You are not quite the same player who went down.'
+          : p.injury.kind === 'slump'
+            ? 'You have no more idea why it went than why it came.'
+            : 'No lasting damage.',
       })
       if (p.injury.weeksTotal >= 12) {
         addHighlight(state, 'comeback', {
@@ -1176,12 +1188,15 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
           importance: 3,
         })
       }
+      // Remember it. Anything you have had once, you are likelier to get again.
+      const hist = state.career.ailmentHistory
+      hist[p.injury.id] = (hist[p.injury.id] || 0) + 1
       p.injury = null
       p.morale = clamp(p.morale + 5, 0, 100)
       refreshDerived(state)
     }
   } else {
-    const setback = rollSetback(rng, p, { physio, psych, playedThisWeek })
+    const setback = rollSetback(rng, p, { physio, psych, playedThisWeek, history: state.career.ailmentHistory })
     if (setback) {
       setback.startedWeek = state.week
       p.injury = setback
@@ -1191,9 +1206,15 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
         year: state.year,
         kind: setback.out ? 'injury' : 'slump',
         text: `${setback.name} — ${plural(setback.weeksTotal, 'week')}.`,
-        detail: setback.text,
+        detail: (state.career.ailmentHistory[setback.id] ? 'It is back. ' : '') + setback.text,
       })
-      pushNews(state, `${setback.name}: out for roughly ${plural(setback.weeksTotal, 'week')}.`, 'bad')
+      pushNews(
+        state,
+        setback.out
+          ? `${setback.name}: out for roughly ${plural(setback.weeksTotal, 'week')}.`
+          : `${setback.name}${setback.chronic ? ' — and it does not look like it is going anywhere' : ''}.`,
+        'bad',
+      )
       if (setback.weeksTotal >= 12) {
         addHighlight(state, 'injury', {
           title: setback.name,

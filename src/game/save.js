@@ -128,6 +128,7 @@ const REQUIRED_SHAPE = {
     h2h: {},
     venueWins: {},
     venueStarts: {},
+    ailmentHistory: {},
     teamCaps: 0,
     teamPicks: 0,
     teamCupWins: 0,

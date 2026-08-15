@@ -19,6 +19,7 @@ import { venueEdge, familiarityLabel } from '../src/game/venue.js'
 import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
 import { CUPS, CUP_WEEK, cupForYear, recordText, selectTeam, simCup } from '../src/game/teamcup.js'
 import { REGIONS } from '../src/game/names.js'
+import { AILMENTS, relapseWeight, residualDamage, rollSetback, slumpRecovery } from '../src/game/injuries.js'
 
 const tourAvgOvr = (s) => {
   const a = s.world.players.filter((p) => !p.retired && !p.isUser)
@@ -1747,6 +1748,96 @@ section('SCENARIO 28 — the calendar has seasons')
   check('where you are still matters more than when',
     meanFor(24, 'links').wind > meanFor(3, 'resort').wind,
     `${meanFor(24, 'links').wind.toFixed(2)} vs ${meanFor(3, 'resort').wind.toFixed(2)}`)
+}
+
+section('SCENARIO 29 — the ones that do not heal')
+{
+  // Slumps existed and were capped at thirty weeks, which is less than a
+  // season. The real thing is measured in years and sometimes ends a career.
+  const rng = new Rng(5)
+  const guy = { age: 30, fatigue: 30, ratings: { mental: 48 } }
+  const slumps = []
+  const injuries = []
+  for (let i = 0; i < 60000; i++) {
+    const sb = rollSetback(rng, guy, { physio: 0.3, psych: 0.3, playedThisWeek: true })
+    if (!sb) continue
+    ;(sb.kind === 'slump' ? slumps : injuries).push(sb)
+  }
+  const weeks = slumps.map((s) => s.weeksTotal).sort((a, b) => a - b)
+  const pct = (p) => weeks[Math.floor(weeks.length * p)]
+  check('most slumps are a bad few months', pct(0.5) <= 20, `median ${pct(0.5)} weeks`)
+  check('some are much worse than that', Math.max(...weeks) > 70, `worst ${Math.max(...weeks)} weeks`)
+  const overSeason = weeks.filter((w) => w > 44).length / weeks.length
+  check('a small share run past a whole season', overSeason > 0.02 && overSeason < 0.15,
+    `${(100 * overSeason).toFixed(1)}%`)
+  const lasting = slumps.filter((s) => Object.keys(residualDamage(s, rng, 0.3)).length > 0).length / slumps.length
+  check('the long ones leave a mark', lasting > 0.02 && lasting < 0.2, `${(100 * lasting).toFixed(1)}%`)
+  check('an ordinary slump does not', residualDamage({ kind: 'slump', chronic: false, weeksTotal: 20, severity: 1, pen: { putting: 18 } }, rng, 0).putting === undefined)
+  console.log(`   slumps: median ${pct(0.5)}w, p90 ${pct(0.9)}w, worst ${Math.max(...weeks)}w; ${(100 * overSeason).toFixed(1)}% run past a season`)
+
+  // Having had it once makes it likelier, which is the defining thing about it.
+  check('never having had it is the baseline', relapseWeight({}, 'yips') === 1)
+  check('having had it makes it likelier', relapseWeight({ yips: 1 }, 'yips') > 1)
+  check('but a career cannot spiral into nothing else',
+    relapseWeight({ yips: 40 }, 'yips') <= 3.5, `${relapseWeight({ yips: 40 }, 'yips')}`)
+  const withHistory = (hist) => {
+    const r = new Rng(31)
+    let n = 0
+    let hits = 0
+    for (let i = 0; i < 40000; i++) {
+      const sb = rollSetback(r, guy, { physio: 0.3, psych: 0.3, playedThisWeek: true, history: hist })
+      if (!sb) continue
+      n += 1
+      if (sb.id === 'yips') hits += 1
+    }
+    return hits / n
+  }
+  const clean = withHistory({})
+  const relapsed = withHistory({ yips: 2 })
+  check('a player who has had the yips gets them again more often', relapsed > clean * 1.4,
+    `${(100 * clean).toFixed(1)}% vs ${(100 * relapsed).toFixed(1)}%`)
+  console.log(`   the yips are ${(100 * clean).toFixed(1)}% of setbacks for a clean player, ${(100 * relapsed).toFixed(1)}% for one who has had them twice`)
+
+  // And the psychologist finally has something to do about it.
+  const weeksToClear = (psych) => {
+    const r = new Rng(88)
+    let total = 0
+    const N = 4000
+    for (let i = 0; i < N; i++) {
+      const sb = { kind: 'slump', weeksLeft: 20, weeksTotal: 20 }
+      let w = 0
+      while (sb.weeksLeft > 0 && w < 200) {
+        sb.weeksLeft -= 1 + slumpRecovery(r, sb, psych)
+        w += 1
+      }
+      total += w
+    }
+    return total / N
+  }
+  const alone = weeksToClear(0)
+  const helped = weeksToClear(0.8)
+  check('a psychologist shortens a slump', helped < alone - 2, `${helped.toFixed(1)} vs ${alone.toFixed(1)} weeks`)
+  check('but cannot make it vanish', helped > alone * 0.5, `${helped.toFixed(1)} vs ${alone.toFixed(1)}`)
+  check('and does nothing for a broken wrist',
+    slumpRecovery(new Rng(1), { kind: 'injury', weeksLeft: 10 }, 0.9) === 0)
+  console.log(`   a 20-week slump clears in ${alone.toFixed(0)} weeks alone, ${helped.toFixed(0)} with a top psychologist`)
+
+  // It has to be remembered across a career and survive a save.
+  const s = E.newGame({ name: 'Fragile', seed: 606, talent: 0.6, age: 22 })
+  for (let i = 0; i < 14; i++) {
+    E.autoOffseason(s)
+    if (s.player.retired) break
+    E.startSeason(s)
+    E.simToOffseason(s)
+  }
+  const hist = s.career.ailmentHistory
+  const total = Object.values(hist).reduce((a, b) => a + b, 0)
+  check('a career remembers what it has had', total > 0, JSON.stringify(hist))
+  check('every remembered ailment is a real one', Object.keys(hist).every((k) => AILMENTS.some((a) => a.id === k)),
+    Object.keys(hist).join(','))
+  const back = importSave(exportSave(s))
+  check('that history survives a save', JSON.stringify(back.career.ailmentHistory) === JSON.stringify(hist))
+  console.log(`   14 seasons produced ${total} setbacks: ${Object.entries(hist).map(([k, v]) => `${k} ${v}`).join(', ')}`)
 }
 
 // ---------------------------------------------------------------------------

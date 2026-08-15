@@ -145,7 +145,35 @@ export function setbackChance(player, { physio = 0, psych = 0, playedThisWeek = 
   return clamp(base, 0, 0.14)
 }
 
-export function rollSetback(rng, player, { physio = 0, psych = 0, playedThisWeek = false }) {
+/**
+ * How much likelier a thing is to come back because it has happened before.
+ *
+ * A player who has had the yips once is not drawing from the same urn as one
+ * who never has — it is the most recurrent affliction in the sport, and the
+ * fear of it is half the affliction. Capped so a career cannot spiral into
+ * nothing but relapses.
+ */
+export function relapseWeight(history, id) {
+  const had = (history && history[id]) || 0
+  if (!had) return 1
+  return Math.min(3.2, 1 + had * 0.9)
+}
+
+/**
+ * The long tail.
+ *
+ * Slumps topped out at thirty weeks, which is less than a season — but the
+ * real thing is measured in years. Duval, Baker-Finch, Knoblauch: careers that
+ * did not recover. Most cases are still a bad few months; roughly one in six
+ * turns chronic and takes two to four times as long, which is what puts the
+ * genuine career-ending version on the table without making it common.
+ */
+function chronicFactor(rng, kind) {
+  if (kind !== 'slump') return 1
+  return rng.chance(0.17) ? rng.float(2.2, 4.6) : 1
+}
+
+export function rollSetback(rng, player, { physio = 0, psych = 0, playedThisWeek = false, history = null } = {}) {
   const chance = setbackChance(player, { physio, psych, playedThisWeek })
   if (!rng.chance(chance)) return null
   const burnoutPush = clamp(player.fatigue / 70, 0, 1.6)
@@ -155,9 +183,11 @@ export function rollSetback(rng, player, { physio = 0, psych = 0, playedThisWeek
     if (a.id === 'burnout') w *= 0.4 + burnoutPush * 2.4
     if (a.kind === 'slump') w *= 0.85
     if (a.id === 'yips') w *= player.ratings.mental < 50 ? 1.8 : 0.7
+    w *= relapseWeight(history, a.id)
     return w
   })
-  const weeks = rng.int(pick.weeks[0], pick.weeks[1])
+  const chronic = chronicFactor(rng, pick.kind)
+  const weeks = Math.round(rng.int(pick.weeks[0], pick.weeks[1]) * chronic)
   const severity = clamp(rng.gauss(1, 0.25), 0.5, 1.8)
   return {
     id: pick.id,
@@ -166,11 +196,23 @@ export function rollSetback(rng, player, { physio = 0, psych = 0, playedThisWeek
     out: pick.out,
     weeksTotal: weeks,
     weeksLeft: weeks,
+    chronic: chronic > 1,
     severity: Math.round(severity * 100) / 100,
     pen: pick.pen,
     text: pick.text,
     startedWeek: null,
   }
+}
+
+/**
+ * A sports psychologist cannot make the yips go away on a Tuesday, but working
+ * on it is the difference between a bad summer and a lost career. Returns the
+ * extra weeks knocked off this week's recovery, which is what finally gives
+ * the role something to do beyond nudging the mental rating in the offseason.
+ */
+export function slumpRecovery(rng, ailment, psych) {
+  if (!ailment || ailment.kind !== 'slump' || psych <= 0) return 0
+  return rng.chance(psych * 0.42) ? 1 : 0
 }
 
 /** Rating penalties from the active ailment, tapering as recovery progresses. */
@@ -188,6 +230,19 @@ export function ailmentPenalty(ailment) {
  * a little off, which is what makes a comeback arc feel earned.
  */
 export function residualDamage(ailment, rng, physio) {
+  // A slump that ran for a year and a half does not simply lift and leave you
+  // the player you were. Ordinary ones cost nothing lasting; chronic ones do,
+  // which is what makes them the thing careers actually end on.
+  if (ailment.kind === 'slump') {
+    if (!ailment.chronic || ailment.weeksTotal < 40) return {}
+    const scale = ailment.severity * 0.55 * (1 - physio * 0.3)
+    const out = {}
+    for (const [k, v] of Object.entries(ailment.pen)) {
+      const loss = Math.round(v * scale * 0.12 * rng.float(0.5, 1.3))
+      if (loss > 0) out[k] = -loss
+    }
+    return out
+  }
   if (ailment.kind !== 'injury') return {}
   const severe = ailment.weeksTotal >= 10
   if (!severe && !rng.chance(0.2)) return {}
