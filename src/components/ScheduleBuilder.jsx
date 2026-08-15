@@ -5,6 +5,7 @@ import { upcomingYear } from '../game/engine.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
 import { fmtMoney } from '../game/finance.js'
 import { plural } from '../game/narrative.js'
+import { familiarityLabel, venueStartsOf, venueWinsOf } from '../game/venue.js'
 import { Card, CircuitChip, Chip } from './ui.jsx'
 
 /**
@@ -130,7 +131,7 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
                         className={`evopt ${on ? 'on' : ''} ${!elig.ok ? 'locked' : ''}`}
                         title={
                           elig.ok
-                            ? `${ev.venue} · ${COURSE_TYPES[ev.courseType].name} · ${elig.via}`
+                            ? `${ev.venue} · ${COURSE_TYPES[ev.courseType].name} · ${familiarityLabel(venueStartsOf(state.career, ev.venue), venueWinsOf(state.career, ev.venue)).toLowerCase()} · ${elig.via}`
                             : `${elig.reason}${elig.qualifier ? ` — qualifier ${(elig.qualifier * 100).toFixed(0)}%` : ''}`
                         }
                         onClick={() => {

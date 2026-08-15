@@ -15,6 +15,7 @@ import { fmtMoney, debtInterest, backerOffer, splitPrize } from '../src/game/fin
 import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
 import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, NORMAL_WIND } from '../src/game/weather.js'
+import { venueEdge, familiarityLabel } from '../src/game/venue.js'
 
 const COURSE_TYPE_LIST = Object.keys(COURSE_TYPES)
 const clamp01to99 = (v) => clamp(v, 1, 99)
@@ -1216,6 +1217,60 @@ section('SCENARIO 21 — the weather is playing too')
   check('weather stays inside its bounds', worst <= 1, `max wind ${worst.toFixed(2)}`)
   check('an average week across the tour is a normal one', Math.abs(wSum / 4000 - NORMAL_WIND) < 0.03,
     `mean wind ${(wSum / 4000).toFixed(3)} vs ${NORMAL_WIND}`)
+}
+
+section('SCENARIO 22 — horses for courses')
+{
+  check('a course you have never seen is a disadvantage', venueEdge(0, 0) < 0, `${venueEdge(0, 0)}`)
+  check('a course you know is an advantage', venueEdge(8, 0) > 0, `${venueEdge(8, 0)}`)
+  check('familiarity stops mattering after a while', venueEdge(8, 0) === venueEdge(40, 0))
+  check('winning somewhere helps, but does not stack forever', venueEdge(8, 12) === venueEdge(8, 3))
+  // Half a shot a week, not two. This is the sort of number that quietly runs
+  // away with a career if it is left uncapped.
+  const swing = venueEdge(40, 9) - venueEdge(0, 0)
+  check('course knowledge is worth less than a stroke and a half', swing * 0.34 < 1.6, `${(swing * 0.34).toFixed(2)} strokes`)
+  console.log(`   never seen it ${venueEdge(0, 0).toFixed(1)} → know it and won on it ${venueEdge(8, 3).toFixed(1)} rating points`)
+
+  // It has to actually accumulate, and survive being saved.
+  const s = E.newGame({ name: 'Course Horse', seed: 606, talent: 0.62, age: 22 })
+  for (let i = 0; i < 6; i++) {
+    E.autoOffseason(s)
+    E.startSeason(s)
+    E.simToOffseason(s)
+  }
+  const visits = Object.entries(s.career.venueStarts)
+  const totalVisits = visits.reduce((a, [, n]) => a + n, 0)
+  check('venue starts are recorded', visits.length > 0 && totalVisits === s.career.starts,
+    `${totalVisits} recorded across ${visits.length} courses vs ${s.career.starts} starts`)
+  const most = visits.sort((a, b) => b[1] - a[1])[0]
+  check('somewhere gets played more than once', most && most[1] > 1, most ? `${most[0]} ${most[1]}×` : 'none')
+  const back = importSave(exportSave(s))
+  check('course knowledge survives a save', back.career.venueStarts[most[0]] === most[1],
+    `${back.career.venueStarts[most[0]]} vs ${most[1]}`)
+  console.log(`   after 6 seasons the most familiar course is ${most[0]}, played ${most[1]}×`)
+
+  // And it has to show up on a scorecard.
+  const EV = { id: 'v', name: 'V', courseType: 'classic', difficulty: 1, fieldSize: 144, cutSize: 65, purse: 8e6, circuit: 'domestic' }
+  const mine = emptyRatings(70)
+  const finishAt = (edge) => {
+    const rng = new Rng(2468)
+    let sum = 0
+    const N = 700
+    for (let i = 0; i < N; i++) {
+      const field = [makeEntrant({ pid: 0, name: 'Me', isUser: true, playstyle: 'balanced', form: 0, fatigue: 0 }, mine, EV, { qualityBonus: edge })]
+      for (let j = 1; j < EV.fieldSize; j++) {
+        const r = emptyRatings(Math.round(rng.gaussClamped(68, 7)))
+        field.push(makeEntrant({ pid: j, name: `P${j}`, playstyle: 'balanced', form: 0, fatigue: 0 }, r, EV))
+      }
+      sum += simTournament(EV, field, rng, { conditions: { wind: 0.35, rain: 0.2, rounds: [0, 1, 2, 3].map(() => ({ wind: 0.35, rain: 0.2 })) } })
+        .results.find((r) => r.pid === 0).toPar
+    }
+    return sum / N
+  }
+  const stranger = finishAt(venueEdge(0, 0))
+  const regular = finishAt(venueEdge(8, 2))
+  check('knowing the course shows up in the score', regular < stranger, `${regular.toFixed(2)} vs ${stranger.toFixed(2)}`)
+  console.log(`   same player, same course: ${stranger.toFixed(2)} as a stranger, ${regular.toFixed(2)} as a regular`)
 }
 
 // ---------------------------------------------------------------------------

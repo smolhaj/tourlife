@@ -127,6 +127,7 @@ const REQUIRED_SHAPE = {
     rivals: [],
     h2h: {},
     venueWins: {},
+    venueStarts: {},
     wins: 0,
     majors: 0,
     seniorWins: 0,

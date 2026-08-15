@@ -28,6 +28,7 @@ import {
   newSeasonStats,
 } from './world.js'
 import { makeEntrant, simTournament } from './tournament.js'
+import { venueEdgeFor } from './venue.js'
 import {
   emptyStaff,
   generateStaffMarket,
@@ -200,6 +201,7 @@ export function newGame(opts = {}) {
       h2h: {},
       rivals: [],
       venueWins: {},
+      venueStarts: {},
       lastMajorWinYear: null,
       firstWinYear: null,
       asianOrderOfMeritWins: 0,
@@ -583,8 +585,11 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
     const p = state.player
     const support = staffMatchdayEffect(state.staff, event)
     const moraleEdge = (p.morale - 55) * 0.018
+    // What you know about this particular golf course, measured against what a
+    // tour regular would know about it.
+    const localKnowledge = venueEdgeFor(state.career, event.venue)
     const e = makeEntrant(p, state.effRatings, event, {
-      qualityBonus: support.quality + moraleEdge + (state.godBoost || 0),
+      qualityBonus: support.quality + moraleEdge + localKnowledge + (state.godBoost || 0),
       // Nerves are for mortals. Without this the boosted player leads after 54
       // holes, catches the Sunday pressure penalty like anyone else, and can
       // still be run down — which is not what a button called "force win" is
@@ -694,6 +699,8 @@ function recordUserResult(state, event, outcome, rng, byPid) {
 
   st.starts += 1
   st.startsByCircuit[event.circuit] = (st.startsByCircuit[event.circuit] || 0) + 1
+  // Course knowledge is built one visit at a time, whatever you shot.
+  state.career.venueStarts[event.venue] = (state.career.venueStarts[event.venue] || 0) + 1
   st.moneyByCircuit[event.circuit] = (st.moneyByCircuit[event.circuit] || 0) + split.gross
   st.prizeGross += split.gross
   st.prizeNet += split.net

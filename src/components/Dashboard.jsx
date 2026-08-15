@@ -6,6 +6,7 @@ import { overallLabel, courseFit } from '../game/ratings.js'
 import { fmtMoney, coastStatus } from '../game/finance.js'
 import { recoveryNote } from '../game/injuries.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
+import { familiarityLabel, venueEdgeFor, venueStartsOf, venueWinsOf } from '../game/venue.js'
 import { Card, Stat, StatGrid, Chip, CircuitChip, Money, ToPar, posLabel, Empty, ProgressBar } from './ui.jsx'
 
 export default function Dashboard({ state, onOpenResult, onGoTab }) {
@@ -291,6 +292,9 @@ function NextEvent({ state, event }) {
         <Chip tone={fits.tone}>{fits.label}</Chip>
         <Chip>Setup: {event.difficulty >= 1.2 ? 'Brutal' : event.difficulty >= 1.05 ? 'Firm' : event.difficulty >= 0.95 ? 'Fair' : 'Gettable'}</Chip>
         <Chip>Field {event.fieldSize}</Chip>
+        <Chip tone={venueEdgeFor(state.career, event.venue) > 0.4 ? 'green' : venueStartsOf(state.career, event.venue) === 0 ? 'red' : undefined}>
+          {familiarityLabel(venueStartsOf(state.career, event.venue), venueWinsOf(state.career, event.venue))}
+        </Chip>
         <Chip tone={elig.ok ? 'green' : 'red'}>{elig.ok ? elig.via : elig.reason}</Chip>
         {state.player.fatigue > 60 ? <Chip tone="red">Tired ({Math.round(state.player.fatigue)}%)</Chip> : null}
       </div>
