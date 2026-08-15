@@ -32,7 +32,7 @@ import {
   newSeasonStats,
 } from './world.js'
 import { makeEntrant, simTournament } from './tournament.js'
-import { venueEdgeFor } from './venue.js'
+import { prepEdgeFor, venueEdgeFor } from './venue.js'
 import {
   CUP_WEEK,
   cupForYear,
@@ -623,7 +623,13 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
     const moraleEdge = (p.morale - 55) * 0.018
     // What you know about this particular golf course, measured against what a
     // tour regular would know about it.
-    const localKnowledge = venueEdgeFor(state.career, event.venue)
+    let localKnowledge = venueEdgeFor(state.career, event.venue)
+    if (state.prep && state.prep.eventId === event.id) {
+      localKnowledge += prepEdgeFor(state.career, event.venue)
+      // Three days on your feet before a tournament is not free.
+      p.fatigue = clamp(p.fatigue + 5, 0, 100)
+      state.prep = null
+    }
     // Force-win used to add a flat 45 quality points, which is decisive for a
     // tour winner and not remotely decisive for a mini-tour player in a
     // 156-man major — the button did nothing for exactly the player most
@@ -1764,6 +1770,8 @@ export function startSeason(state) {
   state.finance.seasonEndorse = 0
   state.finance.seasonAppearance = 0
   state.finance.appearancesTaken = 0
+  state.finance.seasonPrepSpend = 0
+  state.prep = null
   p.season = newSeasonStats()
   state.week = 1
   state.phase = 'season'
@@ -2174,6 +2182,53 @@ export function toggleEntry(state, eventId) {
     if (other && other.week === ev.week) delete target[id]
   }
   target[eventId] = true
+  return state
+}
+
+/**
+ * What preparing properly for a week costs, in money. Three extra nights, a
+ * caddie on the ground, and a Monday flight instead of a Wednesday one.
+ */
+export function prepCost(state, event) {
+  const infl = inflation(state.yearsElapsed)
+  return Math.round((TRAVEL_COST[event.circuit] || 8000) * 0.55 * infl)
+}
+
+/**
+ * Can this week actually be prepared for? Only if you are not playing the week
+ * before it — you cannot walk a course on Monday if you were on a leaderboard
+ * somewhere else on Sunday night, which is the real reason players leave a gap
+ * before the majors.
+ */
+export function canPrepareFor(state, event) {
+  if (!event || state.phase !== 'season') return { ok: false, reason: 'Not during the offseason.' }
+  if (!state.entered[event.id]) return { ok: false, reason: 'You are not entered.' }
+  if (event.week < state.week) return { ok: false, reason: 'That week has gone.' }
+  if (state.prep && state.prep.eventId === event.id) return { ok: false, reason: 'Already prepared.' }
+  const playingBefore = state.season.some((e) => state.entered[e.id] && e.week === event.week - 1)
+  if (playingBefore) return { ok: false, reason: 'You are playing the week before — no time to get there early.' }
+  const cost = prepCost(state, event)
+  if (state.finance.cash - cost < -playerBorrowingLimit(state)) {
+    return { ok: false, reason: 'You cannot fund the trip.' }
+  }
+  return { ok: true, cost }
+}
+
+/** Arrive on Monday and learn the golf course. */
+export function prepareFor(state, eventId) {
+  const event = state.season.find((e) => e.id === eventId)
+  const can = canPrepareFor(state, event)
+  if (!can.ok) return state
+  state.finance.cash -= can.cost
+  state.finance.seasonPrepSpend = (state.finance.seasonPrepSpend || 0) + can.cost
+  state.prep = { eventId, week: event.week }
+  pushLog(state, {
+    week: state.week,
+    year: state.year,
+    kind: 'info',
+    text: `Going early to ${event.venue} to prepare.`,
+    detail: `${fmtMoney(can.cost)} for the extra days. Three practice rounds and every pin position walked.`,
+  })
   return state
 }
 

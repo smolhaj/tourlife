@@ -1,16 +1,16 @@
 import React from 'react'
 import { CIRCUITS, COURSE_TYPES, ATTRS } from '../game/constants.js'
-import { checkEligibility, nextEnteredEvent, seasonSummary, currentBurn } from '../game/engine.js'
+import { checkEligibility, nextEnteredEvent, seasonSummary, currentBurn, canPrepareFor, prepCost } from '../game/engine.js'
 import { careerPhase, majorNarrative, plural } from '../game/narrative.js'
 import { overallLabel, courseFit } from '../game/ratings.js'
 import { fmtMoney, coastStatus } from '../game/finance.js'
 import { recoveryNote } from '../game/injuries.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
-import { familiarityLabel, venueEdgeFor, venueStartsOf, venueWinsOf } from '../game/venue.js'
+import { familiarityLabel, prepEdgeFor, venueEdgeFor, venueStartsOf, venueWinsOf } from '../game/venue.js'
 import { CUP_WEEK, cupForYear, eligibleTeamFor } from '../game/teamcup.js'
 import { Card, Stat, StatGrid, Chip, CircuitChip, Money, ToPar, posLabel, Empty, ProgressBar } from './ui.jsx'
 
-export default function Dashboard({ state, onOpenResult, onGoTab }) {
+export default function Dashboard({ state, onOpenResult, onGoTab, onPrepare }) {
   const p = state.player
   const next = nextEnteredEvent(state)
   const summary = seasonSummary(state)
@@ -23,7 +23,7 @@ export default function Dashboard({ state, onOpenResult, onGoTab }) {
   return (
     <div className="grid grid-main">
       <div className="col">
-        <NextEvent state={state} event={next} />
+        <NextEvent state={state} event={next} onPrepare={onPrepare} />
 
         <CupWeek state={state} />
 
@@ -275,7 +275,37 @@ function CupWeek({ state }) {
   )
 }
 
-function NextEvent({ state, event }) {
+/**
+ * Arriving early. Course knowledge was entirely passive — it accrued or it did
+ * not — and this is the one lever a player has over it.
+ */
+function PrepRow({ state, event, onPrepare }) {
+  const prepped = state.prep && state.prep.eventId === event.id
+  const can = canPrepareFor(state, event)
+  const worth = prepEdgeFor(state.career, event.venue)
+  if (prepped) {
+    return (
+      <div className="chip green wrap" style={{ marginTop: 8 }}>
+        Going early. Three practice rounds at {event.venue} — worth about {(worth * 0.34).toFixed(1)} shots this week.
+      </div>
+    )
+  }
+  if (worth < 0.15) return null
+  return (
+    <div className="row between center wrap gap-sm" style={{ marginTop: 8 }}>
+      <div className="xs muted">
+        {can.ok
+          ? `Arrive on Monday and learn it: ${fmtMoney(can.cost)} and a little tiredness, worth about ${(worth * 0.34).toFixed(1)} shots.`
+          : can.reason}
+      </div>
+      <button className="btn sm" disabled={!can.ok} onClick={() => onPrepare && onPrepare(event.id)}>
+        Go early
+      </button>
+    </div>
+  )
+}
+
+function NextEvent({ state, event, onPrepare }) {
   if (state.phase !== 'season') {
     return (
       <Card title="Offseason">
@@ -334,6 +364,7 @@ function NextEvent({ state, event }) {
         <Chip tone={elig.ok ? 'green' : 'red'}>{elig.ok ? elig.via : elig.reason}</Chip>
         {state.player.fatigue > 60 ? <Chip tone="red">Tired ({Math.round(state.player.fatigue)}%)</Chip> : null}
       </div>
+      <PrepRow state={state} event={event} onPrepare={onPrepare} />
     </Card>
   )
 }

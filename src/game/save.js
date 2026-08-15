@@ -167,6 +167,7 @@ const REQUIRED_TOP = {
   seasonResults: {},
   seasonLog: [],
   bag: {},
+  prep: null,
   cupRota: [],
   cupHolders: {},
   cupHistory: [],

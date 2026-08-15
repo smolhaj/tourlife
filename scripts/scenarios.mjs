@@ -15,7 +15,7 @@ import { fmtMoney, debtInterest, backerOffer, splitPrize, appearanceFee, investm
 import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
 import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, seasonPhase, NORMAL_WIND } from '../src/game/weather.js'
-import { venueEdge, familiarityLabel } from '../src/game/venue.js'
+import { venueEdge, familiarityLabel, prepEdgeFor } from '../src/game/venue.js'
 import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
 import { CUPS, CUP_WEEK, cupForYear, recordText, selectTeam, simCup } from '../src/game/teamcup.js'
 import { REGIONS } from '../src/game/names.js'
@@ -1900,6 +1900,53 @@ section('SCENARIO 30 — paid to turn up')
   check('but it does grow', grown > 130_000_000, fmtMoney(grown))
   check('and debt earns nothing', investmentReturn(new Rng(1), -500_000) === 0)
   console.log(`   $100M invested across 25 seasons becomes ${fmtMoney(grown, { compact: true })} after capital gains tax`)
+}
+
+section('SCENARIO 31 — walking it on Monday')
+{
+  // Course knowledge accrued or it did not; there was nothing a player could
+  // do about it. Preparation is the lever, and it is self-limiting.
+  const career = (n) => ({ venueStarts: { X: n }, venueWins: {} })
+  const worth = [0, 1, 2, 4, 8].map((n) => prepEdgeFor(career(n), 'X'))
+  check('practice transforms a course you have never seen', worth[0] > 1.5, `${worth[0].toFixed(2)}`)
+  check('and does nothing at one you know cold', worth[4] < 0.05, `${worth[4].toFixed(2)}`)
+  check('the value falls the better you know it', worth.every((v, i) => i === 0 || v < worth[i - 1]),
+    worth.map((v) => v.toFixed(2)).join(','))
+  check('it is worth well under a stroke even at its best', worth[0] * 0.34 < 1, `${(worth[0] * 0.34).toFixed(2)} strokes`)
+  console.log(`   prep is worth ${(worth[0] * 0.34).toFixed(2)} shots at a new course, ${(worth[2] * 0.34).toFixed(2)} after two visits, ${(worth[4] * 0.34).toFixed(2)} after eight`)
+
+  const s = E.newGame({ name: 'Prepper', seed: 1234, talent: 0.65, age: 23 })
+  E.autoOffseason(s)
+  E.startSeason(s)
+  const entered = s.season.filter((e) => s.entered[e.id]).sort((a, b) => a.week - b.week)
+  const gapEvent = entered.find((e) => !entered.some((o) => o.week === e.week - 1) && e.week > s.week)
+  const backToBack = entered.find((e) => entered.some((o) => o.week === e.week - 1))
+
+  check('you can prepare for a week you have space before', !!gapEvent && E.canPrepareFor(s, gapEvent).ok,
+    gapEvent ? E.canPrepareFor(s, gapEvent).reason || 'ok' : 'no gap week found')
+  if (backToBack) {
+    check('you cannot get there early if you played Sunday somewhere else',
+      !E.canPrepareFor(s, backToBack).ok, E.canPrepareFor(s, backToBack).reason)
+  }
+  const notEntered = s.season.find((e) => !s.entered[e.id] && e.week > s.week)
+  check('you cannot prepare for an event you are not in', !E.canPrepareFor(s, notEntered).ok)
+
+  const cashBefore = s.finance.cash
+  E.prepareFor(s, gapEvent.id)
+  check('preparing costs money', s.finance.cash < cashBefore, `${cashBefore} → ${s.finance.cash}`)
+  check('and is remembered', s.prep && s.prep.eventId === gapEvent.id)
+  check('you cannot buy it twice', !E.canPrepareFor(s, gapEvent).ok)
+  const back = importSave(exportSave(s))
+  check('preparation survives a save', back.prep && back.prep.eventId === gapEvent.id)
+
+  // It has to be spent when the week arrives, and cost some tiredness.
+  const fatigueBefore = s.player.fatigue
+  while (s.phase === 'season' && s.week <= gapEvent.week) E.simWeek(s)
+  check('the preparation is used up by the event', !s.prep, JSON.stringify(s.prep))
+  check('and three days on your feet cost something', s.player.fatigue > fatigueBefore,
+    `${fatigueBefore.toFixed(0)} → ${s.player.fatigue.toFixed(0)}`)
+  check('the venue is now one you have played',
+    (s.career.venueStarts[gapEvent.venue] || 0) > 0, `${s.career.venueStarts[gapEvent.venue]}`)
 }
 
 // ---------------------------------------------------------------------------

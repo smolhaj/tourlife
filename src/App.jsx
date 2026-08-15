@@ -256,6 +256,7 @@ export default function App() {
       hireStaff: (role, id) => run('hire staff', (d) => E.hireStaff(d, role, id)),
       fireStaff: (role) => run('release staff', (d) => E.fireStaff(d, role)),
       buyEquipment: (slot, id) => run('buy equipment', (d) => E.buyEquipment(d, slot, id)),
+      prepareFor: (id) => run('prepare', (d) => E.prepareFor(d, id)),
       acceptOffer: (id) => run('sign sponsor', (d) => E.acceptOffer(d, id)),
       declineOffer: (id) => run('decline sponsor', (d) => E.declineOffer(d, id), { snapshot: false }),
       negotiateOffer: (id) =>
@@ -373,7 +374,9 @@ export default function App() {
           ))}
         </nav>
         <div style={{ paddingTop: 14 }}>
-          {tab === 'home' ? <Dashboard state={state} onOpenResult={setResultId} onGoTab={setTab} /> : null}
+          {tab === 'home' ? (
+            <Dashboard state={state} onOpenResult={setResultId} onGoTab={setTab} onPrepare={actions.prepareFor} />
+          ) : null}
           {tab === 'schedule' ? (
             <ScheduleBuilder
               state={state}
