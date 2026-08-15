@@ -2,6 +2,7 @@ import { makeRatings, overall, progressYear, jigglePotential } from './ratings.j
 import { makeName, randomRegion, maybeNickname } from './names.js'
 import { clamp } from './rng.js'
 import { SENIOR_AGE, PLAYSTYLES } from './constants.js'
+import { residualDamage, rollSetback } from './injuries.js'
 
 export const POOL_TARGET = {
   domestic: 190,
@@ -213,7 +214,26 @@ export function worldRankingList(players, limit = 100) {
 
 // --------------------------------------------------------------- progression
 
-/** Weekly drift of hot/cold form for every AI player. */
+/**
+ * How much medical and psychological support a player can buy, from how well
+ * they are playing. The same curve the offseason uses for development — a tour
+ * winner has a physio on retainer and a mini-tour player has a foam roller.
+ */
+function supportLevel(p) {
+  return 0.15 + clamp((overall(p.ratings) - 48) / 34, 0, 1) * 0.48
+}
+
+/**
+ * Weekly drift of hot/cold form for every AI player, and whatever goes wrong.
+ *
+ * The rest of the world used to be indestructible. This function decremented
+ * `weeksLeft` and cleared the ailment at zero, and `aiEligible` already refused
+ * to put an injured player in a field, but nothing anywhere ever *gave* an AI
+ * player an injury — so the world number one teed it up forty-four weeks a year
+ * for thirty years, nobody ever lost a season to a back, and nobody ever came
+ * back diminished. The top of the rankings was far more stable than the real
+ * thing, where any five-year stretch is partly a story about who got hurt.
+ */
 export function driftForm(players, rng) {
   for (const p of players) {
     if (p.retired || p.isUser) continue
@@ -221,8 +241,24 @@ export function driftForm(players, rng) {
     p.fatigue = Math.max(0, p.fatigue - 6)
     if (p.injury) {
       p.injury.weeksLeft -= 1
-      if (p.injury.weeksLeft <= 0) p.injury = null
+      if (p.injury.weeksLeft <= 0) {
+        // Not every comeback is complete. This is what puts a former world
+        // number one in the middle of the field at thirty-four and leaves him
+        // there — the thing a ratings curve alone can never produce.
+        const lasting = residualDamage(p.injury, rng, supportLevel(p))
+        for (const [k, v] of Object.entries(lasting)) {
+          p.ratings[k] = clamp((p.ratings[k] || 0) + v, 1, 99)
+        }
+        p.injury = null
+      }
+      continue
     }
+    // `playedThisWeek` is left false rather than tracked: an AI plays roughly
+    // three weeks in five, and carrying that through the whole pool costs a
+    // random draw per player per week for a change of a third of a percent.
+    const care = supportLevel(p)
+    const setback = rollSetback(rng, p, { physio: care, psych: care * 0.8 })
+    if (setback) p.injury = setback
   }
 }
 

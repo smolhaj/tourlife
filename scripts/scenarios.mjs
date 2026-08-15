@@ -20,6 +20,11 @@ import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } fro
 import { CUPS, CUP_WEEK, cupForYear, recordText, simCup } from '../src/game/teamcup.js'
 import { REGIONS } from '../src/game/names.js'
 
+const tourAvgOvr = (s) => {
+  const a = s.world.players.filter((p) => !p.retired && !p.isUser)
+  return a.reduce((x, p) => x + overall(p.ratings), 0) / Math.max(1, a.length)
+}
+
 const COURSE_TYPE_LIST = Object.keys(COURSE_TYPES)
 const clamp01to99 = (v) => clamp(v, 1, 99)
 
@@ -1464,6 +1469,72 @@ section('SCENARIO 24 — the week that pays nothing')
   const back = importSave(exportSave(s))
   check('caps survive a save', back.career.teamCaps === s.career.teamCaps && back.cupHistory.length === 12)
   console.log(`   ${s.career.teamCaps} caps, ${recordText(s.career.teamRecord)}, ${s.career.teamCupWins} cups won over 12 seasons`)
+}
+
+section('SCENARIO 25 — the rest of the world is mortal too')
+{
+  // `driftForm` decremented weeksLeft and `aiEligible` refused to field an
+  // injured player, but nothing ever *gave* an AI player an injury, so the
+  // world number one teed it up forty-four weeks a year for thirty years.
+  const s = E.newGame({ name: 'Observer', seed: 4242, talent: 0.7, age: 21 })
+  const startOvr = tourAvgOvr(s)
+  let weeks = 0
+  let hurtWeeks = 0
+  let outWeeks = 0
+  let activeSum = 0
+  const spells = new Set()
+  let everInAFieldWhileOut = 0
+
+  for (let yr = 0; yr < 12; yr++) {
+    E.autoOffseason(s)
+    if (s.player.retired) break
+    E.startSeason(s)
+    while (s.phase === 'season') {
+      // Snapshot who is already sidelined before the week runs. Checking after
+      // would flag anyone who played on Sunday and got hurt on the range that
+      // same week, which is not a bug — that is the order things happen in.
+      const sidelined = new Set()
+      for (const p of s.world.players) if (p.injury && p.injury.out && !p.isUser) sidelined.add(p.pid)
+      const playedWeek = s.week
+      E.simWeek(s)
+      weeks += 1
+      let hurt = 0
+      let out = 0
+      let active = 0
+      for (const p of s.world.players) {
+        if (p.retired || p.isUser) continue
+        active += 1
+        if (!p.injury) continue
+        hurt += 1
+        if (p.injury.out) out += 1
+        spells.add(`${p.pid}:${p.injury.id}:${p.injury.weeksTotal}:${p.injury.startedWeek}`)
+      }
+      hurtWeeks += hurt
+      outWeeks += out
+      activeSum += active
+      // Nobody who was already sidelined on Monday can be on Sunday's board.
+      for (const summary of Object.values(s.seasonResults)) {
+        if (summary.week !== playedWeek) continue
+        for (const r of summary.top || []) if (sidelined.has(r.pid)) everInAFieldWhileOut += 1
+      }
+    }
+  }
+
+  check('the world gets injured at all', spells.size > 0, `${spells.size} spells`)
+  const outPct = (100 * outWeeks) / Math.max(1, activeSum)
+  const hurtPct = (100 * hurtWeeks) / Math.max(1, activeSum)
+  check('a believable share of the tour is sidelined', outPct > 1.5 && outPct < 12, `${outPct.toFixed(1)}% out`)
+  check('more are carrying something than are actually out', hurtPct > outPct, `${hurtPct.toFixed(1)}% vs ${outPct.toFixed(1)}%`)
+  check('a sidelined player never appears on a leaderboard', everInAFieldWhileOut === 0, `${everInAFieldWhileOut} did`)
+
+  // Nobody gets stuck hurt forever, and comebacks do not grind the tour down.
+  const stuck = s.world.players.filter((p) => !p.retired && p.injury && p.injury.weeksLeft > p.injury.weeksTotal)
+  check('nobody is injured for longer than their diagnosis', stuck.length === 0, `${stuck.length} stuck`)
+  const endOvr = tourAvgOvr(s)
+  check('lasting damage does not grind the whole tour down', Math.abs(endOvr - startOvr) < 6,
+    `tour average ${startOvr.toFixed(1)} → ${endOvr.toFixed(1)} over ${(weeks / 44).toFixed(0)} seasons`)
+  console.log(`   ${outPct.toFixed(1)}% of the tour sidelined at any moment, ${hurtPct.toFixed(1)}% carrying something`)
+  console.log(`   tour average overall ${startOvr.toFixed(1)} → ${endOvr.toFixed(1)} across ${(weeks / 44).toFixed(0)} seasons`)
 }
 
 // ---------------------------------------------------------------------------
