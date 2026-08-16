@@ -2427,9 +2427,23 @@ section('SCENARIO 37 — you only play what you are in the field for')
   check('and none of it is amateur golf',
     firsts.every((f) => f.entered.every((e) => e.circuit !== 'amateur')),
     `${firsts.reduce((a, f) => a + f.entered.filter((e) => e.circuit === 'amateur').length, 0)} amateur events`)
-  check('and every one of them earns real money',
-    firsts.every((f) => f.season.prizeGross > 20000),
-    firsts.map((f) => fmtMoney(f.season.prizeGross)).join(', '))
+  /**
+   * A floor and a typical case, rather than one threshold doing both jobs.
+   *
+   * The bug this guards against paid $5,148 for a whole season, because
+   * sixteen of eighteen starts were amateur events that pay nothing. A bad
+   * rookie year is a different thing: seed 606 comes out of its amateur year
+   * in debt, can afford eleven emerging-tour starts, and misses most of the
+   * cuts for $12,892. That is a professional season going badly, which the
+   * game is allowed to produce — the other five seeds here run from $79,065
+   * to $904,591. Asking every seed to clear $20,000 was testing the weather.
+   */
+  const grosses = firsts.map((f) => f.season.prizeGross).sort((a, b) => a - b)
+  const median = (grosses[2] + grosses[3]) / 2
+  check('even the worst first season is professional money, not amateur',
+    grosses[0] > 10000, fmtMoney(grosses[0]))
+  check('and a typical one is a living',
+    median > 100000, `median ${fmtMoney(median)}`)
   const firstPro = firsts[0].season
   console.log(`   first professional seasons: ${firsts.map((f) => `${f.entered.length} starts/${fmtMoney(f.season.prizeGross)}`).join(', ')}`)
   console.log(`   first professional season: ${firstPro.starts} starts for ${fmtMoney(firstPro.prizeGross)} gross`)
@@ -2569,6 +2583,69 @@ section('SCENARIO 40 — an amateur schedule re-priced as a professional one')
   const starSolv = E.playerSolvency(star)
   check('and comes out of it still inside their credit line', !starSolv.insolvent,
     `${fmtMoney(star.finance.cash)} against ${fmtMoney(starSolv.limit)}`)
+}
+
+section('SCENARIO 41 — the rest of the tour stops too, for its own reasons')
+{
+  // The AI pool retired for exactly two reasons: being old, and being bad.
+  // Between them they left a hole in the curve where real careers end most
+  // often — a player rated over 34 and aged under 40 had no way out at all,
+  // so thirty-five to thirty-nine took 21 retirements against 118 in the band
+  // below and 114 above.
+  const s = E.newGame({ name: 'Obs', seed: 77, talent: 0.6, age: 21 })
+  const seen = new Set()
+  const gone = []
+  for (let yr = 0; yr < 22 && !s.player.retired; yr++) {
+    E.autoOffseason(s)
+    if (s.player.retired) break
+    E.startSeason(s)
+    E.simUntil(s, () => false)
+    for (const p of s.world.players) {
+      if (p.isUser || !p.retired || seen.has(p.pid)) continue
+      seen.add(p.pid)
+      gone.push({ age: p.retiredAge ?? p.age, why: p.retiredReason, ovr: overall(p.ratings) })
+    }
+  }
+
+  check('everybody who stops has a reason on record', gone.every((g) => !!g.why),
+    `${gone.filter((g) => !g.why).length} without one`)
+  const reasons = new Set(gone.map((g) => g.why))
+  check('and they are not all the same reason', reasons.size >= 5, `${reasons.size}: ${[...reasons].join(', ')}`)
+
+  // Every decade of a career should be able to end one. The old model could
+  // not end a career in its thirties at all unless the player was hopeless.
+  const band = (lo, hi) => gone.filter((g) => g.age >= lo && g.age <= hi).length
+  check('careers end in their twenties', band(20, 29) > 0, `${band(20, 29)}`)
+  check('careers end in their thirties', band(30, 39) > 20, `${band(30, 39)}`)
+  check('careers end in their forties', band(40, 49) > 20, `${band(40, 49)}`)
+  check('and some go on past fifty', band(50, 99) > 0, `${band(50, 99)}`)
+
+  // The body ends them young as well as late; age only ever ends them late.
+  const byReason = (w) => gone.filter((g) => g.why === w).map((g) => g.age)
+  const bodies = byReason('the body')
+  check('the body ends careers before forty as well as after',
+    bodies.some((a) => a < 40) && bodies.length > 5, `${bodies.length} of them, youngest ${Math.min(...bodies)}`)
+  check('nobody retires of old age in their twenties',
+    byReason('age').every((a) => a >= 38), `youngest ${Math.min(...byReason('age'), 99)}`)
+  check('and some walk away while they can still play',
+    gone.some((g) => g.ovr >= 55 && g.age < 45), 'nobody left early with a game')
+
+  // None of it may quietly drain a circuit — the pool restocks to target, and
+  // the senior tour has no pool of its own but the tail of everyone else's
+  // career, so it is the one that shows a leak first.
+  const byCircuit = {}
+  for (const p of s.world.players) {
+    if (p.retired || p.isUser) continue
+    byCircuit[p.homeCircuit] = (byCircuit[p.homeCircuit] || 0) + 1
+  }
+  check('the senior circuit still has a field', byCircuit.senior >= 70, `${byCircuit.senior} players`)
+  check('and so does every other one',
+    ['domestic', 'intl', 'asian', 'emerging'].every((c) => byCircuit[c] >= 90), JSON.stringify(byCircuit))
+
+  const counts = {}
+  for (const g of gone) counts[g.why] = (counts[g.why] || 0) + 1
+  console.log(`   ${gone.length} retirements over 22 seasons: ${Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`)
+  console.log(`   by decade: 20s ${band(20, 29)}, 30s ${band(30, 39)}, 40s ${band(40, 49)}, 50+ ${band(50, 99)}`)
 }
 
 // ---------------------------------------------------------------------------
