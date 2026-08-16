@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Tour Life — a golf career simulator inspired by ZenGM",
+  "description": "Tour Life \u2014 a golf career simulator inspired by ZenGM",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,7 +12,8 @@
     "scenarios": "node scripts/scenarios.mjs",
     "hostile": "node scripts/hostile.mjs",
     "fuzz": "node scripts/fuzz.mjs",
-    "test": "node scripts/scenarios.mjs && node scripts/hostile.mjs && node scripts/fuzz.mjs --runs 20 --steps 250"
+    "test": "node scripts/scenarios.mjs && node scripts/hostile.mjs && node scripts/audit.mjs && node scripts/fuzz.mjs --runs 20 --steps 250",
+    "audit": "node scripts/audit.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
