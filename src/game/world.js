@@ -2,6 +2,7 @@ import { makeRatings, overall, progressYear, jigglePotential } from './ratings.j
 import { makeName, randomRegion, maybeNickname } from './names.js'
 import { clamp } from './rng.js'
 import { SENIOR_AGE, PLAYSTYLES } from './constants.js'
+import { residualDamage, rollSetback } from './injuries.js'
 
 export const POOL_TARGET = {
   domestic: 190,
@@ -9,6 +10,12 @@ export const POOL_TARGET = {
   asian: 105,
   emerging: 140,
   amateur: 100, // mini-tour and regional players; the pond you start in
+  // The Senior Circuit was never given a population of its own — it was
+  // entirely whoever happened to survive to fifty out of the aging tail of
+  // everyone else, which came to about twenty-five players for a tour that
+  // advertises seventy-eight-man fields. Some worlds produced twenty, and then
+  // events were run with seventeen people in them.
+  senior: 95,
 }
 
 export const RANK_DECAY = 0.9885 // weekly; ~60-week half life
@@ -40,6 +47,7 @@ export function makeAiPlayer(rng, opts = {}) {
     form: rng.gauss(0, 1.6),
     fatigue: 0,
     injury: null,
+    ailments: {},
     homeCircuit,
     propensity: clamp(rng.gauss(0.66, 0.12), 0.35, 0.92),
     rankPoints: 0,
@@ -78,12 +86,16 @@ export function createWorld(rng, year) {
     { circuit: 'asian', count: POOL_TARGET.asian, talent: [0.38, 0.14] },
     { circuit: 'emerging', count: POOL_TARGET.emerging, talent: [0.3, 0.13] },
     { circuit: 'amateur', count: POOL_TARGET.amateur, talent: [0.2, 0.11] },
+    { circuit: 'senior', count: POOL_TARGET.senior, talent: [0.44, 0.14] },
   ]
   for (const grp of spread) {
     for (let i = 0; i < grp.count; i++) {
-      const age = grp.circuit === 'amateur'
-        ? clamp(Math.round(rng.gauss(24, 3.5)), 18, 34)
-        : clamp(Math.round(rng.gauss(32, 8.5)), 20, 58)
+      const age =
+        grp.circuit === 'amateur'
+          ? clamp(Math.round(rng.gauss(24, 3.5)), 18, 34)
+          : grp.circuit === 'senior'
+            ? clamp(Math.round(rng.gauss(56, 4.5)), SENIOR_AGE, 68)
+            : clamp(Math.round(rng.gauss(32, 8.5)), 20, 52)
       const talent = clamp(rng.gauss(grp.talent[0], grp.talent[1]), 0.03, 0.99)
       const p = makeAiPlayer(rng, { age, talent, homeCircuit: grp.circuit, taken, year })
       // Seed a plausible career already in progress.
@@ -213,7 +225,26 @@ export function worldRankingList(players, limit = 100) {
 
 // --------------------------------------------------------------- progression
 
-/** Weekly drift of hot/cold form for every AI player. */
+/**
+ * How much medical and psychological support a player can buy, from how well
+ * they are playing. The same curve the offseason uses for development — a tour
+ * winner has a physio on retainer and a mini-tour player has a foam roller.
+ */
+function supportLevel(p) {
+  return 0.15 + clamp((overall(p.ratings) - 48) / 34, 0, 1) * 0.48
+}
+
+/**
+ * Weekly drift of hot/cold form for every AI player, and whatever goes wrong.
+ *
+ * The rest of the world used to be indestructible. This function decremented
+ * `weeksLeft` and cleared the ailment at zero, and `aiEligible` already refused
+ * to put an injured player in a field, but nothing anywhere ever *gave* an AI
+ * player an injury — so the world number one teed it up forty-four weeks a year
+ * for thirty years, nobody ever lost a season to a back, and nobody ever came
+ * back diminished. The top of the rankings was far more stable than the real
+ * thing, where any five-year stretch is partly a story about who got hurt.
+ */
 export function driftForm(players, rng) {
   for (const p of players) {
     if (p.retired || p.isUser) continue
@@ -221,8 +252,26 @@ export function driftForm(players, rng) {
     p.fatigue = Math.max(0, p.fatigue - 6)
     if (p.injury) {
       p.injury.weeksLeft -= 1
-      if (p.injury.weeksLeft <= 0) p.injury = null
+      if (p.injury.weeksLeft <= 0) {
+        // Not every comeback is complete. This is what puts a former world
+        // number one in the middle of the field at thirty-four and leaves him
+        // there — the thing a ratings curve alone can never produce.
+        const lasting = residualDamage(p.injury, rng, supportLevel(p))
+        for (const [k, v] of Object.entries(lasting)) {
+          p.ratings[k] = clamp((p.ratings[k] || 0) + v, 1, 99)
+        }
+        if (!p.ailments) p.ailments = {}
+        p.ailments[p.injury.id] = (p.ailments[p.injury.id] || 0) + 1
+        p.injury = null
+      }
+      continue
     }
+    // `playedThisWeek` is left false rather than tracked: an AI plays roughly
+    // three weeks in five, and carrying that through the whole pool costs a
+    // random draw per player per week for a change of a third of a percent.
+    const care = supportLevel(p)
+    const setback = rollSetback(rng, p, { physio: care, psych: care * 0.8, history: p.ailments })
+    if (setback) p.injury = setback
   }
 }
 
@@ -258,9 +307,19 @@ export function progressWorld(world, rng, year) {
     if (p.age >= 40) retireChance += (p.age - 39) * 0.006
     if (ovr < 34) retireChance += 0.25
     if (p.age >= 44 && ovr < 44) retireChance += 0.05
-    if (p.age >= 56) retireChance += (p.age - 55) * 0.045
-    if (p.age >= 63) retireChance += 0.25
-    if (p.age >= 70) retireChance = 1
+    // The old curve emptied the senior tour: almost nobody survived past 62,
+    // so a circuit that advertises 78-player fields was running on a pool of
+    // about thirty — and once injuries started taking a share of those, fields
+    // fell to nineteen. Real senior tours are full because a fifty-five-year-old
+    // who can still play has every reason to keep playing.
+    if (p.age >= 58) retireChance += (p.age - 57) * 0.028
+    if (p.age >= 66) retireChance += 0.2
+    if (p.age >= 72) retireChance = 1
+    // Turning fifty is a change of tour, not a retirement. Anybody who can
+    // still play goes and plays the Senior Circuit, which is the only reason
+    // that circuit has a field at all — it has no pool of its own, it is
+    // entirely the tail of everyone else's career.
+    if (p.age >= SENIOR_AGE && p.age < 66 && ovr >= 40) retireChance = Math.min(retireChance, 0.06)
     // Mini-tour players give up much sooner than tour pros.
     if (p.homeCircuit === 'amateur') {
       retireChance += 0.1 + Math.max(0, p.age - 27) * 0.06
@@ -279,7 +338,11 @@ export function progressWorld(world, rng, year) {
   for (const p of world.players) {
     if (p.retired || p.isUser) continue
     const ovr = overall(p.ratings)
-    if (p.homeCircuit === 'amateur' && ovr > 50) p.homeCircuit = 'emerging'
+    // Fifty is a change of tour. Doing it here rather than leaving them on a
+    // circuit they can no longer enter is what keeps the senior roster in the
+    // overflow bookkeeping below, so it holds its size like every other pool.
+    if (p.age >= SENIOR_AGE) p.homeCircuit = 'senior'
+    else if (p.homeCircuit === 'amateur' && ovr > 50) p.homeCircuit = 'emerging'
     else if (p.homeCircuit === 'emerging' && ovr > 62) p.homeCircuit = rng.chance(0.6) ? 'domestic' : 'intl'
     else if (p.homeCircuit === 'asian' && ovr > 68) p.homeCircuit = 'intl'
     else if (p.homeCircuit === 'intl' && ovr > 72 && rng.chance(0.35)) p.homeCircuit = 'domestic'

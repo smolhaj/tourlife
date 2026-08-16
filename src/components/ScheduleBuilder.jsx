@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react'
 import { CIRCUITS, CIRCUIT_ORDER, COURSE_TYPES } from '../game/constants.js'
 import { checkEligibility, CARD_LABELS, cardStatus } from '../game/eligibility.js'
-import { upcomingYear } from '../game/engine.js'
+import { upcomingYear, longHaulWeeks } from '../game/engine.js'
 import { PLAYING_WEEKS } from '../game/schedule.js'
-import { fmtMoney } from '../game/finance.js'
+import { fmtMoney, appearanceFee } from '../game/finance.js'
+import { marketability } from '../game/sponsors.js'
 import { plural } from '../game/narrative.js'
 import { familiarityLabel, venueStartsOf, venueWinsOf } from '../game/venue.js'
 import { Card, CircuitChip, Chip } from './ui.jsx'
@@ -48,6 +49,10 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
   const totalPurse = enteredList.reduce((a, e) => a + e.purse, 0)
   const majorsIn = enteredList.filter((e) => e.isMajor).length
   const backToBack = maxConsecutive(enteredList.map((e) => e.week))
+  const longHaul = useMemo(() => longHaulWeeks(state, forNext), [state, forNext])
+  // What a promoter would pay you to turn up. Shown at the first-of-season
+  // rate; each one you take that year is worth less than the last.
+  const m = useMemo(() => marketability(state.player, state.career), [state.player, state.career])
 
   return (
     <div className="col">
@@ -105,6 +110,17 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
           </div>
         ) : null}
 
+        {longHaul.length ? (
+          <div className="chip orange wrap" style={{ marginBottom: 8 }}>
+            {plural(longHaul.length, 'long-haul week')} —{' '}
+            {longHaul
+              .slice(0, 3)
+              .map((h) => `${h.name} in week ${h.week} (+${Math.round(h.cost)} fatigue off the plane)`)
+              .join(', ')}
+            {longHaul.length > 3 ? ', and more' : ''}. A week at home either side is most of the cure.
+          </div>
+        ) : null}
+
         {weeks.length === 0 ? (
           <div className="empty">
             No events match. Try the “all” filter — you may need to qualify, or earn status first.
@@ -146,6 +162,9 @@ export default function ScheduleBuilder({ state, forNext, onToggle, onAuto, onCl
                         </span>
                         <span className="mono muted-2">
                           {ev.purse ? fmtMoney(ev.purse, { compact: true }) : 'am'}
+                          {appearanceFee(ev, m, 0) > 0 ? (
+                            <span className="gold"> +{fmtMoney(appearanceFee(ev, m, 0), { compact: true })}</span>
+                          ) : null}
                         </span>
                       </button>
                     )

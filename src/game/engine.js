@@ -7,7 +7,10 @@ import {
   TRAINING_OPTIONS,
   WINTER_WORK_PAY,
   lifestyleById,
+  STAFF_ROLES,
   TRAVEL_COST,
+  TRAVEL_ZONE,
+  zoneGap,
 } from './constants.js'
 import { makeRatings, overall, progressYear, jigglePotential } from './ratings.js'
 import { regionById } from './names.js'
@@ -29,7 +32,9 @@ import {
   newSeasonStats,
 } from './world.js'
 import { makeEntrant, simTournament } from './tournament.js'
-import { venueEdgeFor } from './venue.js'
+import { prepEdgeFor, venueEdgeFor } from './venue.js'
+import { eraLabel, eraStrength, isRollbackYear, yardsAdded } from './era.js'
+import { FINALE_FIELD, FINALE_ID, bonusFor, racePosition, raceStandings, raceTitle } from './race.js'
 import {
   CUP_WEEK,
   cupForYear,
@@ -48,6 +53,7 @@ import {
   staffMatchdayEffect,
   coachTrainingBonus,
   staffQuality,
+  effectiveQ,
 } from './staff.js'
 import {
   starterBag,
@@ -64,9 +70,12 @@ import {
   marketability,
   negotiate,
 } from './sponsors.js'
-import { rollSetback, ailmentPenalty, residualDamage, AILMENTS } from './injuries.js'
+import { rollSetback, ailmentPenalty, residualDamage, slumpRecovery, AILMENTS } from './injuries.js'
 import {
   splitPrize,
+  appearanceFee,
+  netAppearance,
+  paysAppearanceFees,
   netEndorsement,
   annualExpenses,
   investmentReturn,
@@ -96,6 +105,7 @@ import {
   cardStatus,
   Q_SCHOOL_FEE,
   EMERGING_ENTRY_FEE,
+  grantCard,
 } from './eligibility.js'
 
 const AI_SUPPORT_BONUS = 1.15
@@ -204,6 +214,11 @@ export function newGame(opts = {}) {
       careerEarnings: 0,
       careerGross: 0,
       endorsementTotal: 0,
+      appearanceTotal: 0,
+      raceWins: 0,
+      raceBest: null,
+      raceBonusTotal: 0,
+      raceHistory: [],
       bestRank: null,
       weeksAtNo1: 0,
       weeksTop10: 0,
@@ -218,6 +233,7 @@ export function newGame(opts = {}) {
       rivals: [],
       venueWins: {},
       venueStarts: {},
+      ailmentHistory: {},
       teamCaps: 0,
       teamPicks: 0,
       teamCupWins: 0,
@@ -233,6 +249,8 @@ export function newGame(opts = {}) {
       seasonPrizeGross: 0,
       seasonPrizeNet: 0,
       seasonEndorse: 0,
+      seasonAppearance: 0,
+      appearancesTaken: 0,
       passiveIncome: 0,
       history: [],
     },
@@ -520,6 +538,19 @@ const THIN_AFFINITY = 0.2
  * in are trimmed — nobody sees them, and it keeps 30-year skips fast.
  */
 function selectField(state, event, rng, includeUser, cache) {
+  // The finale has no field selection to do — the standings decided it in
+  // August. Whoever is in the top forty is in, and nobody else is.
+  if (event.finale) {
+    const byId = new Map(state.world.players.map((p) => [p.pid, p]))
+    const field = []
+    for (const row of raceStandings(state, FINALE_FIELD)) {
+      if (row.isUser) continue
+      const p = byId.get(row.pid)
+      if (p && !p.retired && !(p.injury && p.injury.out)) field.push(p)
+    }
+    return includeUser ? field.slice(0, event.fieldSize - 1) : field
+  }
+
   const size = includeUser
     ? event.fieldSize
     : Math.min(event.fieldSize, event.isMajor ? 96 : 64)
@@ -582,6 +613,24 @@ function selectField(state, event, rng, includeUser, cache) {
    */
   if (need > 0 && spent.length) draft(spent, need)
 
+  /**
+   * And a last resort under that, because the draft above still filters on
+   * affinity — so a thin roster whose members have little pull towards this
+   * particular event could still produce a seventeen-man "tournament". Below
+   * the floor, everybody eligible turns up. This is the guard the empty
+   * senior fields kept slipping past whenever the random stream shifted, and
+   * making it structural is cheaper than re-tuning the pool every time.
+   */
+  const floor = Math.min(size, 24)
+  if (chosen.length < floor) {
+    for (const p of pool) {
+      if (chosen.length >= floor) break
+      if (used.has(p.pid)) continue
+      chosen.push(p)
+      used.add(p.pid)
+    }
+  }
+
   return chosen
 }
 
@@ -595,6 +644,11 @@ function aiEffRatings(p) {
 
 // ----------------------------------------------------------- event execution
 
+/** The player's quality with no bonuses applied, for sizing the god boost. */
+function baseQuality(p, state, event) {
+  return makeEntrant(p, state.effRatings, event, {}).quality
+}
+
 function runEvent(state, event, rng, { userPlays = false, detailed = false, cache, byPid } = {}) {
   const field = selectField(state, event, rng, userPlays, cache || new Map())
   const entrants = field.map((p) =>
@@ -607,9 +661,28 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
     const moraleEdge = (p.morale - 55) * 0.018
     // What you know about this particular golf course, measured against what a
     // tour regular would know about it.
-    const localKnowledge = venueEdgeFor(state.career, event.venue)
+    let localKnowledge = venueEdgeFor(state.career, event.venue)
+    if (state.prep && state.prep.eventId === event.id) {
+      localKnowledge += prepEdgeFor(state.career, event.venue)
+      // Three days on your feet before a tournament is not free.
+      p.fatigue = clamp(p.fatigue + 5, 0, 100)
+      state.prep = null
+    }
+    // Force-win used to add a flat 45 quality points, which is decisive for a
+    // tour winner and not remotely decisive for a mini-tour player in a
+    // 156-man major — the button did nothing for exactly the player most
+    // likely to press it.
+    //
+    // It is now measured against the field, and against the right quantity:
+    // the winner of a big field is not its best player, it is whoever drew
+    // best out of a hundred and fifty-six, which is worth about sixteen shots
+    // on its own. So the boost clears the best player by a wide margin and the
+    // week is played with most of the noise taken out of it.
+    const godEdge = state.godBoost
+      ? Math.max(0, Math.max(...entrants.map((x) => x.quality)) + 80 - baseQuality(p, state, event))
+      : 0
     const e = makeEntrant(p, state.effRatings, event, {
-      qualityBonus: support.quality + moraleEdge + localKnowledge + (state.godBoost || 0),
+      qualityBonus: support.quality + moraleEdge + localKnowledge + godEdge,
       // Nerves are for mortals. Without this the boosted player leads after 54
       // holes, catches the Sunday pressure penalty like anyone else, and can
       // still be run down — which is not what a button called "force win" is
@@ -617,7 +690,10 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
       ignorePressure: !!state.godBoost,
     })
     e.sigma *= support.sigmaMult
-    if (state.godBoost) state.godBoost = 0
+    if (state.godBoost) {
+      e.sigma *= 0.18
+      state.godBoost = 0
+    }
     entrants.push(e)
   }
 
@@ -672,12 +748,32 @@ function runEvent(state, event, rng, { userPlays = false, detailed = false, cach
   return outcome
 }
 
+/**
+ * What the flight in costs you, on top of the week itself.
+ *
+ * This used to be a flat +7 for playing a different circuit to last week,
+ * which charged the drive between two domestic stops exactly what it charged
+ * a Florida-to-Kuala-Lumpur redeye. Distance is the thing that hurts, and so
+ * is turning straight round: a week at home in between is most of the cure,
+ * and a fortnight is all of it.
+ */
+export function jetLag(state, event) {
+  const gap = zoneGap(state.lastZonePlayed, event.zone || TRAVEL_ZONE[event.circuit])
+  if (gap <= 0) return 0
+  const weeksSince = state.lastPlayedWeek ? state.week - state.lastPlayedWeek : 99
+  const adjusted = weeksSince >= 4 ? 0 : weeksSince === 3 ? 0.25 : weeksSince === 2 ? 0.6 : 1
+  return 11 * gap * adjusted
+}
+
 function fatigueCost(state, event, p) {
   const base = { amateur: 6, emerging: 8, asian: 12, intl: 12, domestic: 10, major: 13, senior: 8 }[event.circuit] || 10
   let cost = base
   if (p.isUser) {
     const last = state.lastCircuitPlayed
-    if (last && last !== event.circuit) cost += 7 // circuit hopping is brutal
+    // A different tour in the same part of the world is a change of routine;
+    // a different continent is a change of body clock.
+    if (last && last !== event.circuit) cost += 2
+    cost += jetLag(state, event)
     cost *= 1 - staffQuality(state.staff, 'physio') * 0.28
     cost *= 1 + (lifestyleById(state.finance.lifestyle).burnout || 0)
     if (p.age > 40) cost *= 1 + (p.age - 40) * 0.03
@@ -762,6 +858,8 @@ function runTeamCup(state, rng) {
   p.fatigue = clamp(p.fatigue + 11, 0, 100)
   p.morale = clamp(p.morale + (won ? 9 : row.w >= 3 ? 4 : -3), 0, 100)
   state.lastCircuitPlayed = 'team'
+  state.lastZonePlayed = 'home'
+  state.lastPlayedWeek = CUP_WEEK
 
   pushLog(state, {
     week: CUP_WEEK,
@@ -819,6 +917,25 @@ function recordUserResult(state, event, outcome, rng, byPid) {
   // Open-entry mini-tour events cost you money to tee up in.
   if (event.circuit === 'emerging' && cardStatus(state, 'emerging') === 'none') {
     state.finance.cash -= EMERGING_ENTRY_FEE
+  }
+
+  // Appearance money: paid for turning up, whatever you shoot. The only
+  // guaranteed cheque in the sport, and the reason a name flies to a weak
+  // field on the other side of the world.
+  const fee = appearanceFee(event, marketability(p, state.career), state.finance.appearancesTaken || 0)
+  if (fee > 0) {
+    const paid = netAppearance(fee, agentCut(state.staff))
+    state.finance.cash += paid.net
+    state.finance.seasonAppearance += paid.net
+    state.finance.appearancesTaken = (state.finance.appearancesTaken || 0) + 1
+    state.career.appearanceTotal += paid.net
+    pushLog(state, {
+      week: event.week,
+      year: state.year,
+      kind: 'money',
+      text: `${fmtMoney(fee)} appearance fee to tee up at ${withArticle(event.name)}.`,
+      detail: `${fmtMoney(paid.net)} after your agent and the tax.`,
+    })
   }
 
   state.finance.cash += split.net
@@ -921,6 +1038,8 @@ function recordUserResult(state, event, outcome, rng, byPid) {
     isMajor: !!event.isMajor,
   })
   state.lastCircuitPlayed = event.circuit
+  state.lastZonePlayed = event.zone || TRAVEL_ZONE[event.circuit] || 'home'
+  state.lastPlayedWeek = event.week
   state.lastResult = { ...logRow, leaderboard: outcome.results.slice(0, 20) }
 
   const posText = row.madeCut ? (row.pos === 1 ? 'WON' : `${row.tied ? 'T' : ''}${row.pos}`) : 'MC'
@@ -1106,6 +1225,10 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
 
   if (p.injury) {
     p.injury.weeksLeft -= 1
+    // Working on it shortens it. A psychologist cannot lift the yips on a
+    // Tuesday, but the difference between doing the work and not is the
+    // difference between a bad summer and a lost career.
+    p.injury.weeksLeft -= slumpRecovery(rng, p.injury, psych)
     if (p.injury.weeksLeft <= 0) {
       const residual = residualDamage(p.injury, rng, physio)
       const lostBits = []
@@ -1117,8 +1240,15 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
         week: state.week,
         year: state.year,
         kind: 'recovery',
-        text: `Cleared to play again after ${plural(p.injury.weeksTotal, 'week')} out (${p.injury.name}).`,
-        detail: lostBits.length ? 'You are not quite the same player who went down.' : 'No lasting damage.',
+        text:
+          p.injury.kind === 'slump'
+            ? `It has lifted — ${plural(p.injury.weeksTotal, 'week')} of ${p.injury.name.toLowerCase()}.`
+            : `Cleared to play again after ${plural(p.injury.weeksTotal, 'week')} out (${p.injury.name}).`,
+        detail: lostBits.length
+          ? 'You are not quite the same player who went down.'
+          : p.injury.kind === 'slump'
+            ? 'You have no more idea why it went than why it came.'
+            : 'No lasting damage.',
       })
       if (p.injury.weeksTotal >= 12) {
         addHighlight(state, 'comeback', {
@@ -1127,12 +1257,15 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
           importance: 3,
         })
       }
+      // Remember it. Anything you have had once, you are likelier to get again.
+      const hist = state.career.ailmentHistory
+      hist[p.injury.id] = (hist[p.injury.id] || 0) + 1
       p.injury = null
       p.morale = clamp(p.morale + 5, 0, 100)
       refreshDerived(state)
     }
   } else {
-    const setback = rollSetback(rng, p, { physio, psych, playedThisWeek })
+    const setback = rollSetback(rng, p, { physio, psych, playedThisWeek, history: state.career.ailmentHistory })
     if (setback) {
       setback.startedWeek = state.week
       p.injury = setback
@@ -1142,9 +1275,15 @@ function weeklyPlayerUpdate(state, rng, playedThisWeek) {
         year: state.year,
         kind: setback.out ? 'injury' : 'slump',
         text: `${setback.name} — ${plural(setback.weeksTotal, 'week')}.`,
-        detail: setback.text,
+        detail: (state.career.ailmentHistory[setback.id] ? 'It is back. ' : '') + setback.text,
       })
-      pushNews(state, `${setback.name}: out for roughly ${plural(setback.weeksTotal, 'week')}.`, 'bad')
+      pushNews(
+        state,
+        setback.out
+          ? `${setback.name}: out for roughly ${plural(setback.weeksTotal, 'week')}.`
+          : `${setback.name}${setback.chronic ? ' — and it does not look like it is going anywhere' : ''}.`,
+        'bad',
+      )
       if (setback.weeksTotal >= 12) {
         addHighlight(state, 'injury', {
           title: setback.name,
@@ -1223,6 +1362,27 @@ export function advanceOneWeek(state, rng) {
       text: `Withdrew from ${withArticle(userEvent.name)} — ${p.injury.name}.`,
     })
     userEvent = null
+  }
+
+  // Nobody enters a season finale. You are in it or you are not, and it is
+  // decided by a table you have been climbing since February — so it cannot go
+  // through the schedule builder, which runs in an offseason when you have no
+  // points at all and would never let you pick it.
+  const finale = state.season.find((e) => e.id === FINALE_ID && e.week === week)
+  if (finale && !state.entered[finale.id] && checkEligibility(state, finale).ok) {
+    for (const id of Object.keys(state.entered)) {
+      const other = state.season.find((e) => e.id === id)
+      if (other && other.week === week) delete state.entered[id]
+    }
+    state.entered[finale.id] = true
+    userEvent = finale
+    pushLog(state, {
+      week,
+      year: state.year,
+      kind: 'info',
+      text: `You made the ${finale.name}.`,
+      detail: `${racePosition(state).pos} in the race with a week to play.`,
+    })
   }
 
   // Cup week. If you are on the team you are not playing anywhere else, which
@@ -1333,6 +1493,38 @@ function endSeason(state, rng) {
   const p = state.player
   const st = state.seasonTotals
 
+  // Where the year finished. Taken before anything resets, because the final
+  // standings are the season's actual result — the thing every week has been
+  // adding up to.
+  const finalRace = racePosition(state)
+  if (finalRace) {
+    state.career.raceBest = Math.min(state.career.raceBest || 999, finalRace.pos)
+    const bonus = bonusFor(finalRace.pos, inflation(state.yearsElapsed))
+    if (bonus > 0) {
+      const paid = netAppearance(bonus, agentCut(state.staff))
+      state.finance.cash += paid.net
+      state.career.raceBonusTotal = (state.career.raceBonusTotal || 0) + paid.net
+      pushNews(state, `${fmtMoney(bonus)} from the bonus pool for finishing ${finalRace.pos} in the race.`, 'money')
+    }
+    if (finalRace.pos === 1) {
+      state.career.raceWins = (state.career.raceWins || 0) + 1
+      // Topping the standings is worth a place on tour for years, which is
+      // what makes the race worth chasing rather than just worth watching.
+      grantCard(state, 'domestic', 'full', 3)
+      state.majorExemptUntil = Math.max(state.majorExemptUntil, state.year + 2)
+      addHighlight(state, 'race', {
+        title: `Number one for ${state.year}`,
+        text: `Top of the ${raceTitle(state.year)} on ${Math.round(finalRace.points)} points. Nobody had a better year.`,
+        importance: 4,
+      })
+    } else if (finalRace.pos <= 5) {
+      pushNews(state, `Finished ${finalRace.pos} in the ${raceTitle(state.year)}.`, 'good')
+    }
+    state.career.raceHistory = state.career.raceHistory || []
+    state.career.raceHistory.push({ year: state.year, pos: finalRace.pos, points: Math.round(finalRace.points) })
+    if (state.career.raceHistory.length > 45) state.career.raceHistory.shift()
+  }
+
   // Money in, money out.
   const endorseGross = sponsorIncome(state.sponsors.deals)
   const endorse = netEndorsement(endorseGross, agentCut(state.staff))
@@ -1435,6 +1627,13 @@ function prepareOffseason(state, isFirst, rng) {
   state.phase = 'offseason'
   state.week = PLAYING_WEEKS + 1
 
+  // The offseason before a career's first season is preparing season zero, not
+  // season one. `upcomingYear` already compensates for this when labelling the
+  // year; everything built here was quietly a season ahead — purses inflated
+  // by a year that had not happened, and now an arms race a year further on
+  // than a rookie's first tee shot.
+  const forSeason = state.yearsElapsed + (isFirst ? 0 : 1)
+
   const cardNotes = isFirst ? [] : resolveCards(state, rng)
 
   // Sponsors roll over; underperformance costs deals.
@@ -1456,21 +1655,28 @@ function prepareOffseason(state, isFirst, rng) {
     0,
     1,
   )
+  // Another season together. Anyone hired during the offseason that follows
+  // starts at zero, which is the point.
+  for (const role of STAFF_ROLES) {
+    const member = state.staff[role.id]
+    if (member) member.yearsWithYou = (member.yearsWithYou || 0) + 1
+  }
+
   const taken = new Set(state.world.players.map((x) => x.name))
   state.staffMarket = generateStaffMarket(rng, rep, taken)
-  state.equipCatalog = generateEquipmentCatalog(rng, state.yearsElapsed + 1, state.year + 1)
+  state.equipCatalog = generateEquipmentCatalog(rng, forSeason, state.year + (isFirst ? 0 : 1))
   state.sponsors.offers = generateOffers(
     rng,
     state.player,
     state.career,
     state.staff,
     state.sponsors.deals,
-    state.yearsElapsed + 1,
+    forSeason,
     sponsorMultiplier(state.staff),
   )
 
   // Next season's fixtures, so the schedule can be built now.
-  state.nextSeason = buildSeason(state.fixtures, state.yearsElapsed + 1, rng)
+  state.nextSeason = buildSeason(state.fixtures, forSeason, rng)
   state.nextEntered = {}
   state.qSchool = null
 
@@ -1660,12 +1866,27 @@ export function startSeason(state) {
   state.finance.seasonPrizeGross = 0
   state.finance.seasonPrizeNet = 0
   state.finance.seasonEndorse = 0
+  state.finance.seasonAppearance = 0
+  state.finance.appearancesTaken = 0
+  state.finance.seasonPrepSpend = 0
+  state.prep = null
   p.season = newSeasonStats()
   state.week = 1
   state.phase = 'season'
   state.offseason = null
+  if (isRollbackYear(state.yearsElapsed)) {
+    pushNews(
+      state,
+      'The ball has been rolled back. Everything flies shorter from this season, and the courses do not get any shorter with it.',
+      'info',
+    )
+  }
+
   state.lastResult = null
   state.lastCircuitPlayed = null
+  // A whole winter at home clears any body clock.
+  state.lastZonePlayed = null
+  state.lastPlayedWeek = null
 
   // Equipment sponsors keep you in their gear.
   const gearDeal = state.sponsors.deals.find((d) => d.providesGear && d.yearsLeft > 0)
@@ -1841,10 +2062,16 @@ function autoBudget(state) {
 function pickAutoTraining(state) {
   const p = state.player
   if (p.fatigue > 62 || p.morale < 32) return 'rest'
+  // Train towards the biggest gap, nudged by what the game is paying for. A
+  // tie-breaker, not a strategy: distance carries the lowest weight in overall
+  // and declines fastest, so a trainer that chased the arms race hard ended up
+  // building worse players who missed the majors entirely.
+  const era = eraStrength(state.yearsElapsed)
+  const pull = { power: 1 + era * 0.6, accuracy: 1 - era * 0.18, shortGame: 1 - era * 0.12 }
   let worst = null
   let gap = -Infinity
   for (const k of ATTR_KEYS) {
-    const g = p.potential[k] - p.ratings[k]
+    const g = (p.potential[k] - p.ratings[k]) * (pull[k] || 1)
     if (g > gap) {
       gap = g
       worst = k
@@ -1862,7 +2089,11 @@ function autoHireStaff(state) {
     const market = state.staffMarket?.[role] || []
     const current = state.staff[role]
     for (const cand of market) {
-      if (current && cand.q <= current.q + 0.06) continue
+      // Judge the swap the way the simulation will: what the candidate is
+      // worth on day one against what the incumbent is worth now. A settled
+      // caddie is worth more than his rating and a new one is worth less, so
+      // a couple of points on paper is not a reason to change anybody.
+      if (current && effectiveQ({ ...cand, yearsWithYou: 0 }) <= effectiveQ(current) + 0.02) continue
       const extra = (cand.salary || 0) - (current?.salary || 0)
       if (spent + extra > budget) continue
       state.staff[role] = { ...cand, yearsWithYou: 0 }
@@ -2066,6 +2297,53 @@ export function toggleEntry(state, eventId) {
   return state
 }
 
+/**
+ * What preparing properly for a week costs, in money. Three extra nights, a
+ * caddie on the ground, and a Monday flight instead of a Wednesday one.
+ */
+export function prepCost(state, event) {
+  const infl = inflation(state.yearsElapsed)
+  return Math.round((TRAVEL_COST[event.circuit] || 8000) * 0.55 * infl)
+}
+
+/**
+ * Can this week actually be prepared for? Only if you are not playing the week
+ * before it — you cannot walk a course on Monday if you were on a leaderboard
+ * somewhere else on Sunday night, which is the real reason players leave a gap
+ * before the majors.
+ */
+export function canPrepareFor(state, event) {
+  if (!event || state.phase !== 'season') return { ok: false, reason: 'Not during the offseason.' }
+  if (!state.entered[event.id]) return { ok: false, reason: 'You are not entered.' }
+  if (event.week < state.week) return { ok: false, reason: 'That week has gone.' }
+  if (state.prep && state.prep.eventId === event.id) return { ok: false, reason: 'Already prepared.' }
+  const playingBefore = state.season.some((e) => state.entered[e.id] && e.week === event.week - 1)
+  if (playingBefore) return { ok: false, reason: 'You are playing the week before — no time to get there early.' }
+  const cost = prepCost(state, event)
+  if (state.finance.cash - cost < -playerBorrowingLimit(state)) {
+    return { ok: false, reason: 'You cannot fund the trip.' }
+  }
+  return { ok: true, cost }
+}
+
+/** Arrive on Monday and learn the golf course. */
+export function prepareFor(state, eventId) {
+  const event = state.season.find((e) => e.id === eventId)
+  const can = canPrepareFor(state, event)
+  if (!can.ok) return state
+  state.finance.cash -= can.cost
+  state.finance.seasonPrepSpend = (state.finance.seasonPrepSpend || 0) + can.cost
+  state.prep = { eventId, week: event.week }
+  pushLog(state, {
+    week: state.week,
+    year: state.year,
+    kind: 'info',
+    text: `Going early to ${event.venue} to prepare.`,
+    detail: `${fmtMoney(can.cost)} for the extra days. Three practice rounds and every pin position walked.`,
+  })
+  return state
+}
+
 export function clearSchedule(state) {
   if (state.phase === 'offseason') state.nextEntered = {}
   else state.entered = {}
@@ -2091,7 +2369,7 @@ export function autoFillSchedule(state, targetStarts) {
     if (ev.week < fromWeek) continue
     const elig = checkEligibility(probe, ev)
     if (!elig.ok) continue
-    const score = eventAttractiveness(ev, p)
+    const score = eventAttractiveness(ev, p, marketability(p, state.career))
     const cur = byWeek.get(ev.week)
     if (!cur || score > cur.score) byWeek.set(ev.week, { ev, score })
   }
@@ -2121,15 +2399,45 @@ export function autoFillSchedule(state, targetStarts) {
     return n
   }
   // Spread the load first, but if the player asked for a punishing schedule
-  // they get one — the fatigue is the point, not something to protect them from.
+  // Nobody sane alternates continents week to week; they go out, play a swing,
+  // and come home. Without this the auto-schedule interleaved Asia and home by
+  // attractiveness alone and paid the jet lag for it every fortnight — a cost
+  // it was not making an informed decision about, and one that pushed marginal
+  // careers off a cliff.
+  const zoneAt = (week) => {
+    const id = Object.keys(target).find((k) => list.find((e) => e.id === k)?.week === week)
+    if (!id) return null
+    const ev = list.find((e) => e.id === id)
+    return ev ? ev.zone || TRAVEL_ZONE[ev.circuit] || 'home' : null
+  }
+  const hopCost = (ev) => {
+    const zone = ev.zone || TRAVEL_ZONE[ev.circuit] || 'home'
+    let cost = 0
+    for (const dir of [-1, 1]) {
+      for (let w = ev.week + dir; w >= 1 && w <= PLAYING_WEEKS && Math.abs(w - ev.week) <= 2; w += dir) {
+        const other = zoneAt(w)
+        if (!other) continue
+        cost += zoneGap(zone, other) / Math.abs(w - ev.week)
+        break
+      }
+    }
+    return cost
+  }
+
   for (const maxRun of [3, 4, Infinity]) {
-    for (const { ev } of ranked) {
+    // Two passes per run length: coherent weeks first, awkward hops only if
+    // the player asked for more starts than the tidy schedule can supply.
+    for (const maxHop of [0.6, Infinity]) {
+      for (const { ev } of ranked) {
+        if (count >= desired) break
+        if (usedWeeks.has(ev.week)) continue
+        if (runLengthWith(ev.week) > maxRun) continue
+        if (hopCost(ev) > maxHop) continue
+        target[ev.id] = true
+        usedWeeks.add(ev.week)
+        count++
+      }
       if (count >= desired) break
-      if (usedWeeks.has(ev.week)) continue
-      if (runLengthWith(ev.week) > maxRun) continue
-      target[ev.id] = true
-      usedWeeks.add(ev.week)
-      count++
     }
     if (count >= desired) break
   }
@@ -2146,10 +2454,13 @@ function defaultTargetStarts(p) {
   return 25
 }
 
-function eventAttractiveness(ev, p) {
+function eventAttractiveness(ev, p, market = 0) {
   const prestige = CIRCUITS[ev.circuit].prestige
   const money = Math.log10(Math.max(1, ev.purse)) / 7
   let score = prestige * 2.2 + money * 1.6 + (ev.isMajor ? 6 : 0) + (ev.flagship ? 0.8 : 0)
+  // Guaranteed money is worth more than the same figure of prize money, which
+  // is the whole reason a name gets on the plane.
+  if (paysAppearanceFees(ev) && market >= 0.45) score += Math.log10(Math.max(1, appearanceFee(ev, market, 0))) / 4
   // An amateur cannot cash a cheque, so there is no point paying entry fees to
   // play for money you are not allowed to keep.
   if (p.status === 'amateur') {
@@ -2420,6 +2731,32 @@ export function upcomingSchedule(state, limit = 8) {
     .filter((e) => state.entered[e.id] && e.week >= state.week)
     .sort((a, b) => a.week - b.week)
     .slice(0, limit)
+}
+
+/**
+ * Long-haul weeks in a schedule, so the cost of a plan is visible while it is
+ * still a plan. Returns the events whose flight in will hurt, worst first.
+ */
+export function longHaulWeeks(state, forNext = false) {
+  const season = forNext ? state.nextSeason : state.season
+  const chosen = forNext ? state.nextEntered : state.entered
+  const entered = season.filter((e) => chosen[e.id]).sort((a, b) => a.week - b.week)
+  const out = []
+  let prevZone = null
+  let prevWeek = null
+  for (const ev of entered) {
+    const zone = ev.zone || TRAVEL_ZONE[ev.circuit] || 'home'
+    const gap = zoneGap(prevZone, zone)
+    if (gap > 0 && prevWeek !== null) {
+      const weeksSince = ev.week - prevWeek
+      const adjusted = weeksSince >= 4 ? 0 : weeksSince === 3 ? 0.25 : weeksSince === 2 ? 0.6 : 1
+      const cost = 11 * gap * adjusted
+      if (cost >= 4) out.push({ eventId: ev.id, name: ev.name, week: ev.week, from: prevZone, to: zone, cost, weeksSince })
+    }
+    prevZone = zone
+    prevWeek = ev.week
+  }
+  return out.sort((a, b) => b.cost - a.cost)
 }
 
 /**

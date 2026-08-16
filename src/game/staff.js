@@ -94,8 +94,49 @@ export function emptyStaff() {
   return { coach: null, caddie: null, physio: null, psych: null, agent: null }
 }
 
+/**
+ * Rapport.
+ *
+ * `yearsWithYou` was stamped on every hire and then never read by anything, so
+ * a caddie who had been on the bag for a decade was worth exactly what an
+ * identically-rated stranger was worth, and churning your whole team every
+ * offseason for a hundredth of a quality point cost you nothing but the
+ * severance.
+ *
+ * That is backwards. The most-repeated thing in golf about a caddie is that he
+ * knows your misses, and players who change swing coaches routinely get worse
+ * for a year before they get better. So a new hire plays below their rating
+ * and a long server plays above it, and the two together mean an upgrade on
+ * paper has to be a real upgrade to be worth making.
+ */
+const RAPPORT_YEARS = 6
+const RAPPORT_MAX = 0.12
+const NEW_HIRE_COST = 0.1
+
+/** Quality points this person gains or loses from how long they have known you. */
+export function rapport(s) {
+  if (!s) return 0
+  const t = clamp((s.yearsWithYou || 0) / RAPPORT_YEARS, 0, 1)
+  return -NEW_HIRE_COST + t * (NEW_HIRE_COST + RAPPORT_MAX)
+}
+
+/** The quality this person is actually worth to you today. */
+export function effectiveQ(s) {
+  return s ? clamp((s.q || 0) + rapport(s), 0.02, 1) : 0
+}
+
+/** How the working relationship is going, for the Team screen. */
+export function rapportLabel(s) {
+  if (!s) return ''
+  const y = s.yearsWithYou || 0
+  if (y === 0) return 'First season together — still learning each other'
+  if (y === 1) return 'Second season together'
+  if (y >= RAPPORT_YEARS) return `${y} years together — knows your game inside out`
+  return `${y + 1}${y + 1 === 3 ? 'rd' : 'th'} season together`
+}
+
 export function staffQuality(staff, role) {
-  return staff?.[role]?.q || 0
+  return effectiveQ(staff?.[role])
 }
 
 export function annualStaffCost(staff) {
@@ -127,16 +168,20 @@ export function staffMatchdayEffect(staff, event) {
   let quality = 0
   let sigmaMult = 1
   if (caddie) {
-    quality += caddie.q * 0.8
+    // Rapport, not the number on the contract: a bag man in his first month
+    // is guessing at the same reads a ten-year man just knows.
+    const cq = effectiveQ(caddie)
+    quality += cq * 0.8
     if (caddie.trait === 'greenReader') quality += 0.5
     if (caddie.trait === 'yardageNerd') quality += 0.35
     if (caddie.trait === 'calm') sigmaMult -= 0.05
     if (caddie.trait === 'veteran' && (event.isMajor || event.flagship)) quality += 0.7
-    sigmaMult -= caddie.q * 0.07
+    sigmaMult -= cq * 0.07
   }
   if (psych) {
+    const pq = effectiveQ(psych)
     const big = event.isMajor || event.seniorMajor ? 1.8 : event.flagship ? 1.2 : 1
-    quality += psych.q * 0.5 * big
+    quality += pq * 0.5 * big
     if (psych.trait === 'closer' && (event.isMajor || event.flagship)) quality += 0.6
     if (psych.trait === 'routine') sigmaMult -= 0.04
   }
@@ -146,7 +191,7 @@ export function staffMatchdayEffect(staff, event) {
 export function coachTrainingBonus(staff, attr) {
   const coach = staff.coach
   if (!coach) return 0
-  let bonus = coach.q * 0.85
+  let bonus = effectiveQ(coach) * 0.85
   if (coach.traitAttr === attr) bonus += 0.55
   return bonus
 }

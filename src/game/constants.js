@@ -6,6 +6,14 @@ export const SETTINGS_KEY = 'tourlife.settings.v1'
 
 export const WEEKS_PER_YEAR = 48 // 44 playing weeks + a 4-week offseason block
 
+/**
+ * Lives here rather than in schedule.js because both the schedule and the
+ * season race need it, and the race is a fixture on the schedule — putting it
+ * in either module makes the two import each other.
+ */
+export const PLAYING_WEEKS = 44
+export const OFFSEASON_WEEK = PLAYING_WEEKS + 1 // weeks 45..48 are the offseason
+
 // ---------------------------------------------------------------- attributes
 
 export const ATTRS = [
@@ -303,6 +311,38 @@ export function lifestyleById(id) {
 }
 
 /** Per-event travel and caddie-expense cost by circuit. */
+/**
+ * Where a circuit's events physically are.
+ *
+ * Fatigue used to charge a flat +7 for playing a different circuit to last
+ * week, which treated driving from one domestic stop to the next exactly like
+ * flying from Florida to Kuala Lumpur. Golf's schedule is the most
+ * geographically punishing in professional sport and the cost of it is jet
+ * lag, not the airfare — which the game was already charging separately.
+ */
+export const TRAVEL_ZONE = {
+  amateur: 'home',
+  emerging: 'home',
+  domestic: 'home',
+  senior: 'home',
+  major: 'home',
+  intl: 'intl',
+  asian: 'asia',
+}
+
+// Keys are the two zone names sorted, which is how zoneGap looks them up.
+const ZONE_GAP = {
+  'home|intl': 1,
+  'asia|home': 1.5,
+  'asia|intl': 1,
+}
+
+/** How far apart two zones are, 0 (same place) to 1.5 (the long way round). */
+export function zoneGap(a, b) {
+  if (!a || !b || a === b) return 0
+  return ZONE_GAP[[a, b].sort().join('|')] ?? 1
+}
+
 export const TRAVEL_COST = {
   amateur: 2200,
   emerging: 4500,

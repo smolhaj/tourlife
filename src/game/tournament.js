@@ -1,6 +1,7 @@
 import { COURSE_TYPES, CIRCUITS, PAYOUT_PCT, pointsMultiplier, playstyleById } from './constants.js'
 import { courseSkill } from './ratings.js'
 import { clamp } from './rng.js'
+import { eraEdgeOf } from './era.js'
 import {
   NEUTRAL,
   NORMAL_RAIN,
@@ -59,6 +60,8 @@ export function makeEntrant(player, ratings, event, extra = {}) {
     // known until the tournament is simulated, and it changes by the day.
     windEdge: windEdgeOf(ratings),
     rainEdge: rainEdgeOf(ratings),
+    // How this player's game is placed in the distance arms race.
+    eraEdge: eraEdgeOf(ratings),
     ratings,
     ignorePressure: !!extra.ignorePressure,
   }
@@ -202,19 +205,32 @@ export function simTournament(event, entrants, rng, opts = {}) {
   let meanQuality = 0
   let meanWindEdge = 0
   let meanRainEdge = 0
+  let meanEraEdge = 0
   for (const e of entrants) {
     meanQuality += e.quality
     meanWindEdge += e.windEdge || 0
     meanRainEdge += e.rainEdge || 0
+    meanEraEdge += e.eraEdge || 0
   }
   const denom = Math.max(1, n)
   meanQuality /= denom
+  meanEraEdge /= denom
+
+  // Thirty years of courses getting longer, applied against the field's own
+  // average so the era reshuffles the order without inflating anybody.
+  const era = event.era || 0
+  if (era !== 0) {
+    for (const e of entrants) e.quality += era * ((e.eraEdge || 0) - meanEraEdge)
+    meanQuality = 0
+    for (const e of entrants) meanQuality += e.quality
+    meanQuality /= denom
+  }
   const meanEdges = { wind: meanWindEdge / denom, rain: meanRainEdge / denom }
 
   // Nobody knows the weather until the week arrives, so it is rolled here
   // rather than carried on the schedule. A caller may supply it — the balance
   // harness pins it flat to measure everything else.
-  const conditions = opts.conditions || event.conditions || rollConditions(rng, event.courseType)
+  const conditions = opts.conditions || event.conditions || rollConditions(rng, event.courseType, event.week)
   const days = conditions.rounds && conditions.rounds.length === 4 ? conditions.rounds : [NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL]
 
   // Round-by-round only where somebody will see it. Playing the four rounds out

@@ -1,5 +1,6 @@
 import { SPONSOR_CATEGORIES, SPONSOR_BRANDS } from './constants.js'
 import { clamp } from './rng.js'
+import { effectiveQ } from './staff.js'
 import { inflation } from './schedule.js'
 
 /**
@@ -74,7 +75,11 @@ export function generateOffers(rng, player, career, staff, activeDeals, yearsEla
   if (room <= 0) return []
   const held = new Set(live.map((d) => d.category))
   const available = SPONSOR_CATEGORIES.filter((c) => !held.has(c.id))
-  const slots = clamp(Math.round(1 + m * 4 + (staff.agent ? staff.agent.q * 2 : 0)), 0, Math.min(room, available.length))
+  // What a long-standing agent buys is conversations, not a bigger number on
+  // each one — the tier's cut and multiplier already price that. Applied to
+  // the slot count rather than the deal value so the endorsement curve, which
+  // is calibrated against real athlete money, is left alone.
+  const slots = clamp(Math.round(1 + m * 4 + effectiveQ(staff.agent) * 2), 0, Math.min(room, available.length))
   const chosen = rng.shuffle(available).slice(0, slots)
 
   return chosen.map((cat, i) => {

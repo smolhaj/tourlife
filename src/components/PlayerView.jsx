@@ -4,7 +4,8 @@ import { tourAverages } from '../game/engine.js'
 import { overallLabel, overall, CURVES, courseFit } from '../game/ratings.js'
 import { careerPhase, majorNarrative, legacyScore, legacyLabel } from '../game/narrative.js'
 import { equipmentBonus, bagTech, techBaseline, startsToSettle } from '../game/equipment.js'
-import { describeStaff } from '../game/staff.js'
+import { describeStaff, rapportLabel } from '../game/staff.js'
+import { eraLabel } from '../game/era.js'
 import { STAFF_ROLES, EQUIP_SLOTS } from '../game/constants.js'
 import { fmtMoney } from '../game/finance.js'
 import { Card, RatingRow, Chip, Stat, StatGrid, Empty, Sparkline } from './ui.jsx'
@@ -104,6 +105,13 @@ export default function PlayerView({ state }) {
                 <Empty>Play a couple of seasons.</Empty>
               )}
               <div className="hr" />
+              <div className="section-title">The game around you</div>
+              <div className="xs muted" style={{ marginBottom: 8 }}>
+                {eraLabel(state.yearsElapsed)}
+                {state.yearsElapsed >= 4
+                  ? '. Length is worth more than it was, and finding the fairway a little less.'
+                  : '.'}
+              </div>
               <div className="section-title">Course fit</div>
               <div className="pill-row">
                 {Object.entries(COURSE_TYPES)
@@ -145,6 +153,9 @@ export default function PlayerView({ state }) {
                   {role.icon} {role.name}
                 </div>
                 <div className="xs muted-2">{describeStaff(state.staff[role.id])}</div>
+                {state.staff[role.id] ? (
+                  <div className="xs muted-2">{rapportLabel(state.staff[role.id])}</div>
+                ) : null}
               </div>
               <div className="mono xs muted">
                 {state.staff[role.id]

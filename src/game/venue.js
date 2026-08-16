@@ -66,3 +66,21 @@ export function venueWinsOf(career, venue) {
 export function venueEdgeFor(career, venue) {
   return venueEdge(venueStartsOf(career, venue), venueWinsOf(career, venue))
 }
+
+/** Visits' worth of knowledge a week of proper preparation is worth. */
+export const PREP_VISITS = 2
+
+/**
+ * What arriving on Monday and actually walking the place buys you.
+ *
+ * Expressed as extra visits rather than a flat bonus, which makes it self-
+ * limiting in the right way: a course you have never seen is transformed by
+ * three days of practice rounds, and one you have played eight times has
+ * nothing left to teach you. Course knowledge was otherwise entirely passive —
+ * it accrued or it did not, and there was nothing to do about it.
+ */
+export function prepEdgeFor(career, venue) {
+  const starts = venueStartsOf(career, venue)
+  const wins = venueWinsOf(career, venue)
+  return venueEdge(starts + PREP_VISITS, wins) - venueEdge(starts, wins)
+}

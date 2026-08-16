@@ -3,6 +3,8 @@ import { worldRankingList } from '../game/world.js'
 import { rivalTable, allTimeBoard, tourAverages } from '../game/engine.js'
 import { overall } from '../game/ratings.js'
 import { fmtMoney } from '../game/finance.js'
+import { inflation } from '../game/schedule.js'
+import { BONUS_POOL, FINALE_FIELD, bonusFor, racePosition, raceStandings, raceTitle } from '../game/race.js'
 import { plural } from '../game/narrative.js'
 import { Card, Chip, Money, Empty, ToPar, CircuitChip } from './ui.jsx'
 
@@ -13,6 +15,7 @@ export default function WorldView({ state }) {
       <div className="tabs">
         {[
           ['ranking', 'World ranking'],
+          ['race', 'Season race'],
           ['rivals', 'Rivalries'],
           ['alltime', 'All-time'],
           ['results', 'This season'],
@@ -23,9 +26,120 @@ export default function WorldView({ state }) {
         ))}
       </div>
       {tab === 'ranking' ? <Ranking state={state} /> : null}
+      {tab === 'race' ? <SeasonRace state={state} /> : null}
       {tab === 'rivals' ? <Rivals state={state} /> : null}
       {tab === 'alltime' ? <AllTime state={state} /> : null}
       {tab === 'results' ? <SeasonResults state={state} /> : null}
+    </div>
+  )
+}
+
+/**
+ * The standings. Card retention has always run off money thresholds resolved
+ * quietly in the offseason; this is the table that makes a season legible
+ * while it is still being played.
+ */
+function SeasonRace({ state }) {
+  const rows = raceStandings(state, 60)
+  const me = racePosition(state)
+  const infl = inflation(state.yearsElapsed)
+  const history = state.career.raceHistory || []
+  if (!rows.length) {
+    return (
+      <Card title={raceTitle(state.year)}>
+        <Empty>Nobody has scored a point yet. The race starts with the first event of the season.</Empty>
+      </Card>
+    )
+  }
+  return (
+    <div className="col">
+      <Card
+        title={raceTitle(state.year)}
+        aux={`top ${FINALE_FIELD} reach the Tour Championship · ${fmtMoney(BONUS_POOL * infl, { compact: true })} bonus pool`}
+      >
+        {me ? (
+          <div className="pill-row" style={{ marginBottom: 10 }}>
+            <Chip tone={me.inFinale ? 'green' : 'red'}>
+              You are {me.pos} of {me.total}
+            </Chip>
+            <Chip>{Math.round(me.points)} points</Chip>
+            {me.inFinale ? (
+              <Chip tone="gold">In the finale</Chip>
+            ) : (
+              <Chip>{Math.round(me.pointsShort)} short of the top {FINALE_FIELD}</Chip>
+            )}
+          </div>
+        ) : null}
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th className="num">#</th>
+                <th>Player</th>
+                <th className="num">Starts</th>
+                <th className="num">Wins</th>
+                <th className="num">Points</th>
+                <th className="num">If it ended today</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr
+                  key={r.pid}
+                  className={r.isUser ? 'me' : ''}
+                  style={r.pos === FINALE_FIELD ? { borderBottom: '2px solid var(--gold)' } : undefined}
+                >
+                  <td className="num mono muted-2">{r.pos}</td>
+                  <td>
+                    {r.flag} {r.name}
+                    {r.isUser ? <b className="gold"> ← you</b> : null}
+                  </td>
+                  <td className="num muted-2">{r.starts}</td>
+                  <td className="num">{r.wins || ''}</td>
+                  <td className="num mono">{Math.round(r.points)}</td>
+                  <td className="num">
+                    <Money v={bonusFor(r.pos, infl)} zeroDash />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="xs muted-2" style={{ marginTop: 8 }}>
+          The gold line is the cut for the Tour Championship. Points come from every event on every tour, weighted by
+          how strong the field was — so this is a measure of the season you have had, not of where you played it.
+        </div>
+      </Card>
+
+      {history.length ? (
+        <Card title="Your race, season by season">
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Year</th>
+                  <th className="num">Finished</th>
+                  <th className="num">Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...history].reverse().map((h) => (
+                  <tr key={h.year}>
+                    <td className="mono muted-2">{h.year}</td>
+                    <td className={`num ${h.pos === 1 ? 'gold b' : ''}`}>{h.pos}</td>
+                    <td className="num mono">{h.points}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {state.career.raceWins ? (
+            <div className="small gold" style={{ marginTop: 8 }}>
+              {plural(state.career.raceWins, 'season')} finished number one.
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
     </div>
   )
 }
