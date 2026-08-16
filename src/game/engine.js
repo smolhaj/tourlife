@@ -1400,6 +1400,31 @@ export function advanceOneWeek(state, rng) {
   let userEvent = userEventId ? state.season.find((e) => e.id === userEventId) : null
   const p = state.player
 
+  /**
+   * A schedule is built weeks or months before it is played, against a state
+   * that has since moved on, and nothing ever rechecked it. Two things got
+   * through: a player who turned professional still had a season of amateur
+   * events entered and teed up in all of them for no money, and the Tour
+   * Championship stayed entered from one year to the next so it was played
+   * every season whether or not it had been earned.
+   *
+   * Entry is a plan; this is the starter's tent.
+   */
+  if (userEvent) {
+    const elig = checkEligibility(state, userEvent)
+    if (!elig.ok) {
+      pushLog(state, {
+        week,
+        year: state.year,
+        kind: 'wd',
+        text: `Not in the field for ${withArticle(userEvent.name)}.`,
+        detail: elig.reason,
+      })
+      delete state.entered[userEvent.id]
+      userEvent = null
+    }
+  }
+
   // An injury that keeps you out withdraws you from the week's event.
   let withdrew = false
   if (userEvent && p.injury && p.injury.out) {
@@ -1901,7 +1926,9 @@ export function startSeason(state) {
   }
 
   // Turning pro.
+  let turnedPro = false
   if (p.status === 'amateur' && (state.pendingTurnPro || p.age >= 24)) {
+    turnedPro = true
     p.status = 'pro'
     p.homeCircuit = 'emerging'
     state.pendingTurnPro = false
@@ -1936,6 +1963,24 @@ export function startSeason(state) {
       'The ball has been rolled back. Everything flies shorter from this season, and the courses do not get any shorter with it.',
       'info',
     )
+  }
+
+  /**
+   * Turning professional voids an amateur schedule, and the schedule was built
+   * last autumn by somebody who was still an amateur. Sixteen of a first
+   * season's eighteen starts were amateur events the player was no longer
+   * allowed to enter — they teed up in them anyway, because nothing rechecked
+   * entry, and earned nothing all year.
+   *
+   * Drop what is no longer open, then fill the freed weeks with what is.
+   */
+  if (turnedPro) {
+    const wanted = Object.keys(state.entered).length
+    for (const id of Object.keys(state.entered)) {
+      const ev = state.season.find((e) => e.id === id)
+      if (!ev || !checkEligibility(state, ev).ok) delete state.entered[id]
+    }
+    if (wanted > 0 && Object.keys(state.entered).length < wanted) autoFillSchedule(state, wanted)
   }
 
   state.lastResult = null
@@ -2057,7 +2102,20 @@ export function simToAge(state, targetAge, opts = {}) {
 export function autoOffseason(state, opts = {}) {
   const rng = Rng.from(state.rngState)
   state.rngState = rng.s
-  if (state.player.status === 'amateur' && state.player.age >= 21) state.pendingTurnPro = true
+  /**
+   * Play the amateur season you started with, then turn professional.
+   *
+   * The auto-manager used to turn pro at 21, which made the amateur circuit
+   * dead content for two of the three starting ages — it only looked reachable
+   * because a bug let professionals go on playing amateur events. Keyed off
+   * seasons played rather than age, because an offseason is preparing next
+   * season and the age does not tick over until it starts: an age test here
+   * costs two amateur years, not one. startSeason still forces the issue at 24
+   * for anybody dawdling.
+   */
+  if (state.player.status === 'amateur' && (state.player.age >= 22 || state.career.seasons.length >= 1)) {
+    state.pendingTurnPro = true
+  }
 
   // Money first, because it decides whether there is a season at all. Take a
   // backer if one is on the table, and if there is not and the credit is gone,
@@ -2423,6 +2481,10 @@ export function autoFillSchedule(state, targetStarts) {
   const byWeek = new Map()
   for (const ev of list) {
     if (ev.week < fromWeek) continue
+    // Nobody enters a season finale, and during an offseason the standings
+    // still hold last year's points — so it looked eligible and got picked,
+    // then stayed entered into a season it had not been earned in.
+    if (ev.finale) continue
     const elig = checkEligibility(probe, ev)
     if (!elig.ok) continue
     const score = eventAttractiveness(ev, p, marketability(p, state.career))
