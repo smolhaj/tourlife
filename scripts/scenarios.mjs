@@ -2423,8 +2423,21 @@ section('SCENARIO 37 — you only play what you are in the field for')
     E.simToOffseason(r)
     firsts.push({ seed, entered, season: r.career.seasons[r.career.seasons.length - 1] })
   }
-  check('a first professional season is a season, not a fragment',
-    firsts.every((f) => f.entered.length >= 8), firsts.map((f) => f.entered.length).join(','))
+  /**
+   * Written as "at least eight starts", which was the smallest number the six
+   * seeds happened to produce the day it was written — a floor set to the
+   * observed minimum is a test of the weather, and it duly failed the moment
+   * a family raised the cost of living and one seed came out at seven.
+   *
+   * The two things the code actually promises: `trimScheduleToBudget` never
+   * cuts below six, so a season pinned at the floor means the budget ran out
+   * entirely; and a typical first year should be a real season rather than a
+   * salvage job.
+   */
+  const sizes = firsts.map((f) => f.entered.length).sort((a, b) => a - b)
+  check('no first season is pinned at the emergency floor', sizes[0] > 6, sizes.join(','))
+  check('and a typical one is a real season',
+    (sizes[2] + sizes[3]) / 2 >= 12, `median ${(sizes[2] + sizes[3]) / 2} of ${sizes.join(',')}`)
   check('and none of it is amateur golf',
     firsts.every((f) => f.entered.every((e) => e.circuit !== 'amateur')),
     `${firsts.reduce((a, f) => a + f.entered.filter((e) => e.circuit === 'amateur').length, 0)} amateur events`)
@@ -2674,16 +2687,21 @@ section('SCENARIO 42 — the life the tour is played instead of')
     if (s.family.status === 'divorced') divorced++
     if (seen.includes('single') && seen.indexOf('partner') >= 0) parted++
     orders.push(seen)
-    // The state machine's whole point: you cannot skip a step.
-    for (const st of seen) check('no impossible household', ['single','partner','married','separated','divorced'].includes(st), st)
   }
+  // The state machine's whole point: you cannot skip a step. One assertion over
+  // every household-year, not one per year — a check inside a nested loop added
+  // five hundred passes to the suite total and tested nothing five hundred times.
+  const STATES = ['single', 'partner', 'married', 'separated', 'divorced']
+  check('no impossible household', orders.every((seen) => seen.every((st) => STATES.includes(st))),
+    orders.flat().find((st) => !STATES.includes(st)))
   check('nobody divorces without marrying first', orders.every((seen) => {
     const d = seen.indexOf('divorced')
     return d < 0 || seen.slice(0, d).some((x) => x === 'married' || x === 'separated')
   }), 'a divorce arrived out of nowhere')
   check('most careers find somebody', married >= n * 0.5, `${married}/${n} married`)
   check('but it is not automatic', married < n || parted > 0, 'every single career married with no partings')
-  check('children only arrive into a household', orders.every((seen) => seen.length === 0 || true))
+  check('children only arrive into a household that exists',
+    kids === 0 || married > 0, `${kids} careers had children, ${married} were ever married`)
   check('an ultimatum happens, and is rare', ultimatums > 0 && ultimatums <= n, `${ultimatums} across ${n} careers`)
   console.log(`   ${n} careers: ${married} married, ${kids} had children, ${ultimatums} ultimatums, ${divorced} divorced`)
 
