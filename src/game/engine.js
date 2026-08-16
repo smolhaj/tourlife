@@ -2510,13 +2510,32 @@ function defaultTargetStarts(p) {
   return 25
 }
 
-function eventAttractiveness(ev, p, market = 0) {
+export function eventAttractiveness(ev, p, market = 0) {
   const prestige = CIRCUITS[ev.circuit].prestige
   const money = Math.log10(Math.max(1, ev.purse)) / 7
   let score = prestige * 2.2 + money * 1.6 + (ev.isMajor ? 6 : 0) + (ev.flagship ? 0.8 : 0)
-  // Guaranteed money is worth more than the same figure of prize money, which
-  // is the whole reason a name gets on the plane.
-  if (paysAppearanceFees(ev) && market >= 0.45) score += Math.log10(Math.max(1, appearanceFee(ev, market, 0))) / 4
+
+  /**
+   * Guaranteed money is a reason to get on a plane, but only a small one, and
+   * this got it badly wrong when appearance fees were added.
+   *
+   * It was `log10(fee) / 4`, which is a flat offset of about 1.5 for any fee
+   * worth having — while the entire purse range, from a $1m mini-tour week to
+   * a $26m major, only moves this score by 0.32, because the money term is
+   * deliberately compressed. So any appearance fee at all swamped every other
+   * financial consideration: a $6.2m international stop scored 4.70 against a
+   * $24.2m domestic flagship's 4.69, and the auto-schedule sent a marketable
+   * player abroad nearly every week of the year.
+   *
+   * It also priced every week as the *first* fee of the season, ignoring the
+   * diminishing returns that exist precisely to stop a player collecting a
+   * full cheque forty times. Priced at a mid-season slot now, and capped at
+   * roughly the gap between two circuits' prestige — enough to tip a choice
+   * between comparable weeks, never enough to beat a bigger tour.
+   */
+  if (paysAppearanceFees(ev) && market >= 0.45) {
+    score += clamp(appearanceFee(ev, market, 5) / 1_500_000, 0, 1) * 0.4
+  }
   // An amateur cannot cash a cheque, so there is no point paying entry fees to
   // play for money you are not allowed to keep.
   if (p.status === 'amateur') {

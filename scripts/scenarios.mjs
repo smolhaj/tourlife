@@ -12,7 +12,7 @@ import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf, effe
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney, debtInterest, backerOffer, splitPrize, appearanceFee, investmentReturn } from '../src/game/finance.js'
-import { dealValue, generateOffers, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
+import { dealValue, generateOffers, marketability, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
 import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, seasonPhase, NORMAL_WIND } from '../src/game/weather.js'
 import { venueEdge, familiarityLabel, prepEdgeFor } from '../src/game/venue.js'
@@ -2251,6 +2251,63 @@ section('SCENARIO 35 — the numbers a tour publishes')
     back.career.seasons.every((x, i) => x.scoringAvg === s.career.seasons[i].scoringAvg))
   const low = recs.reduce((a, b) => (b[1].toPar < a[1].toPar ? b : a))
   console.log(`   ${recs.length} course records held; the lowest is ${low[1].toPar} by ${low[1].name} at ${low[0]} in ${low[1].year}`)
+}
+
+section('SCENARIO 36 — a star still plays at home')
+{
+  // Appearance money went in as `log10(fee) / 4`, a flat offset of about 1.5
+  // for any fee worth having — while the whole purse range, a $1m mini-tour
+  // week to a $26m major, only moves the attractiveness score by 0.32. So the
+  // fee swamped every other financial consideration and Heavy (32) built a
+  // season of twenty-four international starts and no domestic ones at all.
+  const s = E.newGame({ name: 'Star', seed: 5150, talent: 0.86, age: 22 })
+  for (let i = 0; i < 14; i++) {
+    E.autoOffseason(s)
+    if (s.player.retired) break
+    E.startSeason(s)
+    E.simToOffseason(s)
+  }
+  E.autoOffseason(s)
+  const m = marketability(s.player, s.career)
+  check('this test needs a marketable player to mean anything', m >= 0.45, `marketability ${m.toFixed(2)}`)
+
+  for (const target of [18, 25, 32]) {
+    E.autoFillSchedule(s, target)
+    const picked = s.nextSeason.filter((e) => s.nextEntered[e.id])
+    const by = {}
+    for (const e of picked) by[e.circuit] = (by[e.circuit] || 0) + 1
+    const home = (by.domestic || 0) + (by.major || 0)
+    const abroad = (by.intl || 0) + (by.asian || 0)
+    check(`${target} starts: the home tour is the backbone`, home > abroad,
+      Object.entries(by).map(([k, v]) => `${k} ${v}`).join(', '))
+    check(`${target} starts: all four majors`, (by.major || 0) === 4, `${by.major || 0}`)
+    check(`${target} starts: not a season of nothing but appearance fees`, (by.domestic || 0) > 0,
+      Object.entries(by).map(([k, v]) => `${k} ${v}`).join(', '))
+    if (target === 32) {
+      console.log(`   heavy schedule: ${Object.entries(by).map(([k, v]) => `${k} ${v}`).join(', ')}`)
+    }
+  }
+
+  // And the identity underneath it: guaranteed money tips a close call, it
+  // does not overturn a tier.
+  const big = { circuit: 'domestic', purse: 24.2e6, flagship: true, isMajor: false }
+  const small = { circuit: 'asian', purse: 2.74e6, flagship: false, isMajor: false }
+  const mid = { circuit: 'intl', purse: 6.22e6, flagship: false, isMajor: false }
+  const rich = { status: 'pro' }
+  check('a big domestic flagship beats a small Asian stop with a fee',
+    E.eventAttractiveness(big, rich, 1.0) > E.eventAttractiveness(small, rich, 1.0),
+    `${E.eventAttractiveness(big, rich, 1.0).toFixed(2)} vs ${E.eventAttractiveness(small, rich, 1.0).toFixed(2)}`)
+  check('and beats a mid-sized international one',
+    E.eventAttractiveness(big, rich, 1.0) > E.eventAttractiveness(mid, rich, 1.0),
+    `${E.eventAttractiveness(big, rich, 1.0).toFixed(2)} vs ${E.eventAttractiveness(mid, rich, 1.0).toFixed(2)}`)
+  // But the fee is not inert — it is the reason anybody gets on the plane.
+  const withFee = E.eventAttractiveness(mid, rich, 1.0)
+  const without = E.eventAttractiveness(mid, rich, 0)
+  check('a marketable player still values the trip more than an unknown does', withFee > without,
+    `${withFee.toFixed(2)} vs ${without.toFixed(2)}`)
+  check('but it is worth less than a circuit tier', withFee - without < 0.5,
+    `${(withFee - without).toFixed(2)}`)
+  console.log(`   appearance money is worth ${(withFee - without).toFixed(2)} of schedule appeal; a tour tier is worth ${(2.2 * (1 - 0.78)).toFixed(2)}`)
 }
 
 // ---------------------------------------------------------------------------
