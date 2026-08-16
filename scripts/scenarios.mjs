@@ -19,6 +19,7 @@ import { venueEdge, familiarityLabel, prepEdgeFor } from '../src/game/venue.js'
 import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
 import { CUPS, CUP_WEEK, cupForYear, recordText, selectTeam, simCup } from '../src/game/teamcup.js'
 import { REGIONS } from '../src/game/names.js'
+import { STAT_DEFS, drivingDistance, scoringAverage, statLine, statRanks } from '../src/game/stats.js'
 import { ROLLBACK_YEAR, eraEdgeOf, eraStrength, yardsAdded } from '../src/game/era.js'
 import { BONUS_PLACES, BONUS_POOL, FINALE_FIELD, FINALE_ID, FINALE_WEEK, bonusFor, racePosition, raceStandings } from '../src/game/race.js'
 import { AILMENTS, relapseWeight, residualDamage, rollSetback, slumpRecovery } from '../src/game/injuries.js'
@@ -2173,6 +2174,83 @@ section('SCENARIO 34 — how often the great ones actually win')
   console.log(`   best of ten elite careers: ${best.majors} majors from ${best.majStarts} starts (${(100 * best.majRate).toFixed(1)}%, Woods was 22%)`)
   console.log(`   best win rate: ${bestWin.wins} from ${bestWin.starts} (${(100 * bestWin.winRate).toFixed(1)}%, Snead about 12%)`)
   console.log(`   major counts across the ten: ${spread.join(', ')}`)
+}
+
+section('SCENARIO 35 — the numbers a tour publishes')
+{
+  // The sim produced every round score in every career and derived not one
+  // statistic from any of them. Scoring average is the single most-quoted
+  // number about a golfer and it did not exist.
+  const s = E.newGame({ name: 'Statto', seed: 5, talent: 0.7, age: 22 })
+  for (let i = 0; i < 8; i++) {
+    E.autoOffseason(s)
+    if (s.player.retired) break
+    E.startSeason(s)
+    E.simToOffseason(s)
+  }
+  const seasons = s.career.seasons.filter((x) => x.rounds > 0)
+  check('every season with starts has a scoring average', seasons.every((x) => x.scoringAvg > 0),
+    seasons.map((x) => x.scoringAvg).join(','))
+  check('scoring averages are golf scores', seasons.every((x) => x.scoringAvg > 64 && x.scoringAvg < 80),
+    seasons.map((x) => x.scoringAvg).join(','))
+  // A tour pro averages about 70 to 71.5. Anything outside that means the
+  // scoring model has drifted, which is the point of measuring it.
+  const mean = seasons.reduce((a, x) => a + x.scoringAvg, 0) / Math.max(1, seasons.length)
+  check('a good player averages about what a tour pro averages', mean > 68.5 && mean < 73.5, `${mean.toFixed(2)}`)
+  check('rounds are counted, not guessed', seasons.every((x) => x.rounds >= x.starts * 2 && x.rounds <= x.starts * 4),
+    seasons.map((x) => `${x.rounds}/${x.starts}`).join(' '))
+  console.log(`   scoring averages across ${seasons.length} seasons: ${seasons.map((x) => x.scoringAvg.toFixed(2)).join(', ')}`)
+
+  // Missing a cut has to make the average worse, not better.
+  const before = scoringAverage({ rounds: 40, strokes: 40 * 70 })
+  const afterMC = scoringAverage({ rounds: 42, strokes: 40 * 70 + 2 * 76 })
+  check('a bad missed cut drags the average up', afterMC > before, `${afterMC} vs ${before}`)
+  check('no rounds means no average', scoringAverage({ rounds: 0, strokes: 0 }) === null)
+
+  // The derived ones have to behave like the statistics they are named after.
+  const long = { ...emptyRatings(50), power: 92 }
+  const short = { ...emptyRatings(50), power: 20 }
+  check('long hitters hit it further', drivingDistance(long) > drivingDistance(short) + 40,
+    `${drivingDistance(long)} vs ${drivingDistance(short)}`)
+  check('and everybody is inside real yardages',
+    drivingDistance(short) > 240 && drivingDistance(long) < 340,
+    `${drivingDistance(short)}–${drivingDistance(long)}`)
+  check('the arms race shows up in the yardages', drivingDistance(long, 20) > drivingDistance(long, 0),
+    `${drivingDistance(long, 0)} → ${drivingDistance(long, 20)}`)
+  const line = statLine(emptyRatings(50))
+  check('an average player is average at everything',
+    line.accuracy > 40 && line.accuracy < 55 && line.gir > 55 && line.gir < 68 && line.putts > 28.5 && line.putts < 30.5,
+    JSON.stringify(line))
+  const elite = statLine({ ...emptyRatings(88) })
+  check('an elite player leads every category', elite.gir > line.gir && elite.putts < line.putts && elite.scrambling > line.scrambling,
+    JSON.stringify(elite))
+
+  const ranks = statRanks(s.effRatings, s.world.players, s.yearsElapsed)
+  check('every statistic has a tour rank', STAT_DEFS.filter((d) => d.fn).every((d) => ranks[d.key].rank >= 1),
+    JSON.stringify(Object.keys(ranks)))
+  check('ranks are inside the field', STAT_DEFS.filter((d) => d.fn).every((d) => ranks[d.key].rank <= ranks[d.key].of))
+  // Lower-is-better statistics must rank the right way round.
+  const puttRank = statRanks({ ...emptyRatings(50), putting: 99 }, s.world.players, 0).putts
+  const badPuttRank = statRanks({ ...emptyRatings(50), putting: 5 }, s.world.players, 0).putts
+  check('the best putter on tour is ranked first, not last', puttRank.rank < badPuttRank.rank,
+    `${puttRank.rank} vs ${badPuttRank.rank}`)
+  console.log(`   a 99 putter ranks #${puttRank.rank} of ${puttRank.of}; a 5 putter ranks #${badPuttRank.rank}`)
+
+  // Course records.
+  const recs = Object.entries(s.courseRecords || {})
+  check('courses remember what has been shot on them', recs.length > 40, `${recs.length} venues`)
+  check('every record is a real one', recs.every(([, r]) => typeof r.toPar === 'number' && r.name && r.year),
+    JSON.stringify(recs[0]))
+  // A record must be the best ever seen there, so replaying cannot worsen it.
+  const [venue, rec] = recs[0]
+  const everWorse = Object.values(s.seasonResults).some((x) => x.venue === venue && x.winner && x.winner.toPar < rec.toPar)
+  check('a record is the lowest score the venue has seen', !everWorse, `${venue} holds ${rec.toPar}`)
+  const back = importSave(exportSave(s))
+  check('records survive a save', Object.keys(back.courseRecords).length === recs.length)
+  check('scoring history survives a save',
+    back.career.seasons.every((x, i) => x.scoringAvg === s.career.seasons[i].scoringAvg))
+  const low = recs.reduce((a, b) => (b[1].toPar < a[1].toPar ? b : a))
+  console.log(`   ${recs.length} course records held; the lowest is ${low[1].toPar} by ${low[1].name} at ${low[0]} in ${low[1].year}`)
 }
 
 // ---------------------------------------------------------------------------

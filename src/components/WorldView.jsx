@@ -8,7 +8,7 @@ import { BONUS_POOL, FINALE_FIELD, bonusFor, racePosition, raceStandings, raceTi
 import { plural } from '../game/narrative.js'
 import { Card, Chip, Money, Empty, ToPar, CircuitChip } from './ui.jsx'
 
-export default function WorldView({ state }) {
+export default function WorldView({ state, onOpenPlayer }) {
   const [tab, setTab] = useState('ranking')
   return (
     <div className="col">
@@ -25,9 +25,9 @@ export default function WorldView({ state }) {
           </button>
         ))}
       </div>
-      {tab === 'ranking' ? <Ranking state={state} /> : null}
-      {tab === 'race' ? <SeasonRace state={state} /> : null}
-      {tab === 'rivals' ? <Rivals state={state} /> : null}
+      {tab === 'ranking' ? <Ranking state={state} onOpenPlayer={onOpenPlayer} /> : null}
+      {tab === 'race' ? <SeasonRace state={state} onOpenPlayer={onOpenPlayer} /> : null}
+      {tab === 'rivals' ? <Rivals state={state} onOpenPlayer={onOpenPlayer} /> : null}
       {tab === 'alltime' ? <AllTime state={state} /> : null}
       {tab === 'results' ? <SeasonResults state={state} /> : null}
     </div>
@@ -39,7 +39,7 @@ export default function WorldView({ state }) {
  * quietly in the offseason; this is the table that makes a season legible
  * while it is still being played.
  */
-function SeasonRace({ state }) {
+function SeasonRace({ state, onOpenPlayer }) {
   const rows = raceStandings(state, 60)
   const me = racePosition(state)
   const infl = inflation(state.yearsElapsed)
@@ -86,7 +86,8 @@ function SeasonRace({ state }) {
               {rows.map((r) => (
                 <tr
                   key={r.pid}
-                  className={r.isUser ? 'me' : ''}
+                  className={`${r.isUser ? 'me' : ''} ${r.isUser ? '' : 'pointer'}`}
+                  onClick={() => !r.isUser && onOpenPlayer && onOpenPlayer(r.pid)}
                   style={r.pos === FINALE_FIELD ? { borderBottom: '2px solid var(--gold)' } : undefined}
                 >
                   <td className="num mono muted-2">{r.pos}</td>
@@ -144,7 +145,7 @@ function SeasonRace({ state }) {
   )
 }
 
-function Ranking({ state }) {
+function Ranking({ state, onOpenPlayer }) {
   const list = useMemo(() => worldRankingList(state.world.players, 100), [state])
   const avg = tourAverages(state)
   const me = state.player
@@ -166,7 +167,11 @@ function Ranking({ state }) {
             </thead>
             <tbody>
               {list.map((p, i) => (
-                <tr key={p.pid} className={p.isUser ? 'me' : ''}>
+                <tr
+                  key={p.pid}
+                  className={`${p.isUser ? 'me' : ''} ${p.isUser ? '' : 'pointer'}`}
+                  onClick={() => !p.isUser && onOpenPlayer && onOpenPlayer(p.pid)}
+                >
                   <td className="num mono">{i + 1}</td>
                   <td>
                     {p.flag} {p.name}
@@ -246,7 +251,7 @@ function Ranking({ state }) {
   )
 }
 
-function Rivals({ state }) {
+function Rivals({ state, onOpenPlayer }) {
   const rows = rivalTable(state, 20)
   const named = state.career.rivals || []
   if (!rows.length)
@@ -265,7 +270,11 @@ function Rivals({ state }) {
             if (!h) return null
             const total = Math.max(1, h.beat + h.lost)
             return (
-              <div key={r.pid} className="card flat tight">
+              <div
+                key={r.pid}
+                className="card flat tight pointer"
+                onClick={() => onOpenPlayer && onOpenPlayer(r.pid)}
+              >
                 <div className="b">
                   {r.flag} {r.name}
                 </div>
@@ -306,7 +315,7 @@ function Rivals({ state }) {
           {rows.map((r) => {
             const pct = r.meetings ? (r.beat / Math.max(1, r.beat + r.lost)) * 100 : 0
             return (
-              <tr key={r.pid}>
+              <tr key={r.pid} className="pointer" onClick={() => onOpenPlayer && onOpenPlayer(r.pid)}>
                 <td>
                   {r.flag} {r.name}
                 </td>
