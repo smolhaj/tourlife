@@ -199,6 +199,53 @@ const BACKER_NAMES = [
   'a family friend with more money than sense',
 ]
 
+/**
+ * What is behind you on the first tee.
+ *
+ * Nobody arrives at professional golf from nowhere. The money that funds a
+ * first season comes from a parent, a whip-round at the home club, a local
+ * business owner who wants a share, or it does not come at all — and which of
+ * those it was is the single largest thing separating two players with the
+ * same swing. A season costs more than most of these numbers, on purpose:
+ * this is a starting position, not a solution.
+ *
+ * The staked option is the real one. It is how the bottom of the sport is
+ * actually financed, and it is a genuine trade: the only entry here that can
+ * pay for a full year, in exchange for a fifth of everything you win while
+ * you are still young enough for it to compound.
+ */
+export const BACKINGS = [
+  {
+    id: 'nothing',
+    label: 'Nothing behind you',
+    cash: 4_000,
+    blurb: 'A car, a bag, and whatever is left from working last summer. You will be borrowing by March.',
+  },
+  {
+    id: 'club',
+    label: 'A whip-round at your home club',
+    cash: 22_000,
+    blurb: 'The members put an envelope together. No strings, and not quite enough.',
+  },
+  {
+    id: 'staked',
+    label: 'A local backer took a punt on you',
+    cash: 70_000,
+    stake: { cut: 0.2, years: 5, name: 'the investor who staked you' },
+    blurb: 'Enough to actually play a season — and they take a fifth of everything you win for five years.',
+  },
+  {
+    id: 'family',
+    label: 'Family money',
+    cash: 150_000,
+    blurb: 'You have never had to think about this, and you are about to find out what that was worth.',
+  },
+]
+
+export function backingById(id) {
+  return BACKINGS.find((b) => b.id === id) || BACKINGS[1]
+}
+
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v
 }

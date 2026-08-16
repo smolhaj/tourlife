@@ -11,7 +11,7 @@ import { simTournament, makeEntrant } from '../src/game/tournament.js'
 import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf, effectiveQ, rapport } from '../src/game/staff.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
-import { fmtMoney, debtInterest, backerOffer, splitPrize, appearanceFee, investmentReturn } from '../src/game/finance.js'
+import { fmtMoney, debtInterest, backerOffer, splitPrize, appearanceFee, investmentReturn, BACKINGS, annualExpenses } from '../src/game/finance.js'
 import { dealValue, generateOffers, marketability, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
 import { Rng, clamp } from '../src/game/rng.js'
 import { conditionsLabel, rollConditions, seasonPhase, NORMAL_WIND } from '../src/game/weather.js'
@@ -2383,25 +2383,192 @@ section('SCENARIO 37 — you only play what you are in the field for')
   check('but it is still reached on merit', played > 0, `${played} finales played`)
   console.log(`   16 seasons: the finale was entered in advance ${carried} times and earned ${played} times`)
 
-  // Turning pro rebuilds the schedule rather than voiding it.
+  /**
+   * Turning pro rebuilds the schedule rather than voiding it.
+   *
+   * Measured across seeds rather than pinned to one. This was a single-seed
+   * assertion of "at least twelve starts", which held while the amateur year
+   * was free: the schedule for the first paid season was costed as though the
+   * player arrived with their bankroll intact. They do not — an amateur year
+   * ends about $25,000 down, and that debt is now carried in and priced into
+   * what the first professional season can be. Across six seeds it now buys
+   * between eight and eighteen starts depending on how the amateur year went,
+   * which is the variation the old pin was hiding rather than testing.
+   *
+   * What actually distinguishes the fixed code from the bug is unchanged and
+   * checked below: not one amateur event survives into a professional season,
+   * and the season earns real money instead of the $5,148 it used to.
+   */
   const rookie = E.newGame({ name: 'Rookie', seed: 606, talent: 0.6, age: 21 })
   E.autoOffseason(rookie)
   E.startSeason(rookie)
-  const amateurSeason = rookie.player.status === 'amateur'
-  check('a 21-year-old amateur gets an amateur season', amateurSeason, rookie.player.status)
+  check('a 21-year-old amateur gets an amateur season', rookie.player.status === 'amateur', rookie.player.status)
   E.simToOffseason(rookie)
   E.autoOffseason(rookie)
   E.startSeason(rookie)
   check('and is a professional the year after', rookie.player.status === 'pro', rookie.player.status)
-  const entered = rookie.season.filter((e) => rookie.entered[e.id])
-  check('with a full schedule, not the wreckage of an amateur one', entered.length >= 12, `${entered.length} starts`)
-  check('and none of it amateur', entered.every((e) => e.circuit !== 'amateur'),
-    entered.filter((e) => e.circuit === 'amateur').length + ' amateur events')
-  E.simToOffseason(rookie)
-  const firstPro = rookie.career.seasons[rookie.career.seasons.length - 1]
-  check('a first professional season earns real money', firstPro.prizeGross > 20000,
-    fmtMoney(firstPro.prizeGross))
+
+  const firsts = []
+  for (const seed of [606, 101, 202, 303, 404, 505]) {
+    const r = seed === 606 ? rookie : E.newGame({ name: 'R', seed, talent: 0.6, age: 21 })
+    if (seed !== 606) {
+      E.autoOffseason(r)
+      E.startSeason(r)
+      E.simToOffseason(r)
+      E.autoOffseason(r)
+      E.startSeason(r)
+    }
+    const entered = r.season.filter((e) => r.entered[e.id])
+    E.simToOffseason(r)
+    firsts.push({ seed, entered, season: r.career.seasons[r.career.seasons.length - 1] })
+  }
+  check('a first professional season is a season, not a fragment',
+    firsts.every((f) => f.entered.length >= 8), firsts.map((f) => f.entered.length).join(','))
+  check('and none of it is amateur golf',
+    firsts.every((f) => f.entered.every((e) => e.circuit !== 'amateur')),
+    `${firsts.reduce((a, f) => a + f.entered.filter((e) => e.circuit === 'amateur').length, 0)} amateur events`)
+  check('and every one of them earns real money',
+    firsts.every((f) => f.season.prizeGross > 20000),
+    firsts.map((f) => fmtMoney(f.season.prizeGross)).join(', '))
+  const firstPro = firsts[0].season
+  console.log(`   first professional seasons: ${firsts.map((f) => `${f.entered.length} starts/${fmtMoney(f.season.prizeGross)}`).join(', ')}`)
   console.log(`   first professional season: ${firstPro.starts} starts for ${fmtMoney(firstPro.prizeGross)} gross`)
+}
+
+section('SCENARIO 38 — what is behind you on the first tee')
+{
+  // Starting cash was a bare literal with no reasoning attached to it, and it
+  // was the number that decided whether the first year was playable at all.
+  const seen = new Set()
+  for (const b of BACKINGS) {
+    const s = E.newGame({ name: 'B', seed: 909, talent: 0.55, age: 21, backing: b.id })
+    check(`${b.id} starts you with what it says`, s.finance.cash === b.cash, `${s.finance.cash} vs ${b.cash}`)
+    check(`${b.id} starts spartan`, s.finance.lifestyle === 'spartan', s.finance.lifestyle)
+    seen.add(s.finance.cash)
+    if (b.stake) {
+      check('a staked player owes a cut from the first cheque',
+        s.finance.backer && s.finance.backer.cut === b.stake.cut, JSON.stringify(s.finance.backer))
+      check('and that cut is actually taken out of prize money',
+        E.backerCutOf(s) === b.stake.cut, `${E.backerCutOf(s)}`)
+    } else {
+      check(`${b.id} owes nobody a share`, E.backerCutOf(s) === 0, `${E.backerCutOf(s)}`)
+    }
+  }
+  check('the choices are actually different', seen.size === BACKINGS.length, `${seen.size} distinct`)
+
+  // The floor: the default lifestyle used to cost more per year than the
+  // starting cash, so every new career was in debt before it teed up.
+  const s = E.newGame({ name: 'B', seed: 909, talent: 0.55, age: 21 })
+  const amateurLiving = annualExpenses({
+    lifestyleId: s.finance.lifestyle, staffCost: 0, startsByCircuit: {}, yearsElapsed: 0, amateur: true,
+  }).living
+  check('an amateur year of living costs less than the default bankroll',
+    amateurLiving < s.finance.cash, `${fmtMoney(amateurLiving)} vs ${fmtMoney(s.finance.cash)}`)
+  console.log(`   spartan amateur living ${fmtMoney(amateurLiving)} against a ${fmtMoney(s.finance.cash)} bankroll`)
+}
+
+section('SCENARIO 39 — nobody quits in November')
+{
+  // A weak player who turned professional went bankrupt after a single season
+  // and the career was over at twenty-three. That is not how the bottom of
+  // this sport works: you take the club job, teach through the winter, and
+  // turn up in February. It postpones rather than solves, and it runs out.
+  const ages = []
+  let folded = 0, reachedFive = 0, careers = 0
+  for (let seed = 1; seed <= 12; seed++) {
+    const s = E.newGame({ name: 'Grind', seed, talent: 0.35, age: 22 })
+    let seasons = 0
+    for (let yr = 0; yr < 16 && !s.player.retired; yr++) {
+      E.autoOffseason(s)
+      if (s.player.retired) break
+      E.startSeason(s)
+      E.simUntil(s, () => false)
+      seasons++
+    }
+    careers++
+    if (seasons >= 5) reachedFive++
+    if (s.player.foldedBroke) { folded++; ages.push(s.career.retiredAge) }
+  }
+  check('a marginal professional gets more than one season', reachedFive >= careers * 0.8,
+    `${reachedFive}/${careers} reached five`)
+  check('but the bottom of the game still ends careers', folded >= 2, `${folded}/${careers} folded`)
+  check('and none of them end at twenty-three', ages.every((a) => a >= 24), `earliest ${Math.min(...ages)}`)
+  console.log(`   ${folded}/${careers} folded, ages ${ages.length ? `${Math.min(...ages)}–${Math.max(...ages)}` : '—'}; ${reachedFive}/${careers} lasted five seasons`)
+
+  // The lifeline is bounded, and bounded by age — money follows promise here
+  // exactly as it does for a backer.
+  const young = E.newGame({ name: 'Young', seed: 11, talent: 0.5, age: 22 })
+  const old = E.newGame({ name: 'Old', seed: 11, talent: 0.5, age: 22 })
+  E.god.set(old, 'age', 38)
+  check('a young player gets more reprieves than an old one',
+    E.reprievesLeft(young) > E.reprievesLeft(old), `${E.reprievesLeft(young)} vs ${E.reprievesLeft(old)}`)
+  const spent = E.newGame({ name: 'Spent', seed: 11, talent: 0.5, age: 22 })
+  spent.finance.workedThrough = 99
+  check('and they do run out', E.reprievesLeft(spent) === 0, `${E.reprievesLeft(spent)}`)
+
+  // Out of credit with reprieves left is a season; out of reprieves is not.
+  const broke = E.newGame({ name: 'Broke', seed: 12, talent: 0.5, age: 24 })
+  broke.finance.cash = -400_000
+  check('no reprieve covers a hole that size', !E.canFundSeason(broke).ok, JSON.stringify(E.canFundSeason(broke)))
+  const dented = E.newGame({ name: 'Dented', seed: 12, talent: 0.5, age: 24 })
+  dented.finance.cash = -(E.playerBorrowingLimit(dented) + 5_000)
+  const fund = E.canFundSeason(dented)
+  check('but a winter of work covers a small one', fund.ok && fund.mustWork, JSON.stringify(fund))
+  E.startSeason(dented)
+  check('and taking it costs you the winter', dented.training.choice === 'work', dented.training.choice)
+  check('and one of your reprieves', dented.finance.workedThrough === 1, `${dented.finance.workedThrough}`)
+}
+
+section('SCENARIO 40 — an amateur schedule re-priced as a professional one')
+{
+  // Built in an autumn when the player was still an amateur, so it was costed
+  // at $2,200 a week and a 35% cost of living; played as a professional at
+  // $4,500 a week and full rate. Filling the freed weeks without re-pricing
+  // them committed a rookie to a season costing more than their credit line.
+  // Checked across the talent range rather than on one seed: the property is
+  // that the schedule is costed against a professional budget at the tee, not
+  // that any particular career comes out at any particular number.
+  for (const [seed, talent, label] of [[4242, 0.86, 'star'], [606, 0.6, 'mid'], [1, 0.35, 'weak']]) {
+    const s = E.newGame({ name: 'Turn', seed, talent, age: 22 })
+    E.autoOffseason(s)
+    E.startSeason(s)
+    const evs = Object.keys(s.entered)
+      .filter((k) => s.entered[k])
+      .map((id) => s.season.find((e) => e.id === id))
+      .filter(Boolean)
+    check(`${label}: turning pro still leaves a real season`, evs.length >= 12, `${evs.length} starts`)
+    check(`${label}: spread across the year`, Math.min(...evs.map((e) => e.week)) <= 8,
+      `nothing before week ${Math.min(...evs.map((e) => e.week))}`)
+    // The trim and the budget move together — dropping a week also drops the
+    // money that week was expected to bring in — so this settles just above
+    // the line rather than exactly on it. Unrepriced it was nowhere near.
+    check(`${label}: priced against a professional budget`,
+      E.plannedTravelCost(s) <= E.seasonBudget(s) * 1.05,
+      `${fmtMoney(E.plannedTravelCost(s))} against ${fmtMoney(E.seasonBudget(s))}`)
+    console.log(`   ${label}: ${evs.length} starts, ${fmtMoney(E.plannedTravelCost(s))} of travel on a ${fmtMoney(E.seasonBudget(s))} budget`)
+  }
+
+  /**
+   * And a genuine prospect is not priced out of their own first season, which
+   * is what a blunter budget rule did — every rookie floored at six starts.
+   *
+   * This asked for a rookie year in profit, which was a measurement taken
+   * before the lifestyle fix rather than a property: a cheaper life bought
+   * this player two more starts and a longer trip, and the year came out
+   * $39,635 down instead of $94,623 up. A first professional season losing
+   * money is the normal case, not a failure — nobody is exempt into anything
+   * and the flights are real. What must hold is that it does not cost more
+   * than the player can borrow.
+   */
+  const star = E.newGame({ name: 'Star', seed: 4242, talent: 0.86, age: 22 })
+  E.autoOffseason(star)
+  E.startSeason(star)
+  const starStarts = Object.values(star.entered).filter(Boolean).length
+  check('a generational prospect plays a full rookie season', starStarts >= 15, `${starStarts} starts`)
+  E.simUntil(star, () => false)
+  const starSolv = E.playerSolvency(star)
+  check('and comes out of it still inside their credit line', !starSolv.insolvent,
+    `${fmtMoney(star.finance.cash)} against ${fmtMoney(starSolv.limit)}`)
 }
 
 // ---------------------------------------------------------------------------

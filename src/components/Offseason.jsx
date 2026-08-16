@@ -14,6 +14,7 @@ import { coachTrainingBonus, qualityOf, qualityEffect, qualityBand, effectiveQ, 
 import { ratingTextColor } from '../game/ratings.js'
 import { marketability } from '../game/sponsors.js'
 import { plural } from '../game/narrative.js'
+import { canFundSeason, winterWorkPay } from '../game/engine.js'
 import { Card, Option, Chip, Money, Empty, StatGrid, Stat, CircuitChip } from './ui.jsx'
 import ScheduleBuilder from './ScheduleBuilder.jsx'
 
@@ -122,11 +123,24 @@ function Review({ state, last, os, actions }) {
           <Card title={os.solvency.insolvent ? 'The money has run out' : 'The money is running out'}>
             <div style={{ fontSize: 15 }}>
               {os.solvency.insolvent ? (
-                <>
-                  You owe <b className="red">{fmtMoney(os.solvency.debt)}</b> and nobody will lend you another penny.
-                  Entry fees and flights are due long before any prize money arrives, so unless somebody funds you,
-                  there is no season to start.
-                </>
+                (() => {
+                  const fund = canFundSeason(state)
+                  return fund.mustWork ? (
+                    <>
+                      You owe <b className="red">{fmtMoney(os.solvency.debt)}</b> and nobody will lend you another
+                      penny. There is one way to start a season anyway, and it is the one everybody down here takes:
+                      the club will have you behind the counter and on the lesson tee all winter for about{' '}
+                      <b>{fmtMoney(winterWorkPay(state))}</b>. It costs you the winter's practice, and they will not
+                      keep offering — <b className="orange">{plural(fund.reprievesLeft, 'more time')}</b> at your age.
+                    </>
+                  ) : (
+                    <>
+                      You owe <b className="red">{fmtMoney(os.solvency.debt)}</b>, nobody will lend you another penny,
+                      and a winter at the club no longer covers the gap. Unless somebody funds you, there is no season
+                      to start.
+                    </>
+                  )
+                })()
               ) : (
                 <>
                   You owe <b className="red">{fmtMoney(os.solvency.debt)}</b> against a ceiling of about{' '}

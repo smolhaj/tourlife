@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { REGIONS } from '../game/names.js'
 import { PLAYSTYLES } from '../game/constants.js'
+import { BACKINGS, fmtMoney } from '../game/finance.js'
 import { Card, Option } from './ui.jsx'
 
 export const PROSPECT_TIERS = [
@@ -42,6 +43,7 @@ export default function NewCareer({ onStart, hasSave, onContinue, onImport }) {
   const [age, setAge] = useState(21)
   const [tier, setTier] = useState('college')
   const [playstyle, setPlaystyle] = useState('balanced')
+  const [backing, setBacking] = useState('club')
   const [difficulty, setDifficulty] = useState('normal')
   const [seedText, setSeedText] = useState('')
   const [importing, setImporting] = useState(false)
@@ -60,6 +62,7 @@ export default function NewCareer({ onStart, hasSave, onContinue, onImport }) {
       age: Number(age),
       talent: prospect.talent,
       playstyle,
+      backing,
       difficulty,
       seed,
     })
@@ -172,6 +175,21 @@ export default function NewCareer({ onStart, hasSave, onContinue, onImport }) {
                 onClick={() => setTier(t.id)}
                 title={t.label}
                 desc={t.blurb}
+              />
+            ))}
+          </div>
+        </Card>
+
+        <Card title="What is behind you" aux="A season costs more than any of these. That is the point.">
+          <div className="col gap-sm">
+            {BACKINGS.map((b) => (
+              <Option
+                key={b.id}
+                selected={backing === b.id}
+                onClick={() => setBacking(b.id)}
+                title={b.label}
+                desc={b.blurb}
+                right={b.stake ? `${fmtMoney(b.cash)} · −${Math.round(b.stake.cut * 100)}%` : fmtMoney(b.cash)}
               />
             ))}
           </div>

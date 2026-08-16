@@ -86,6 +86,7 @@ import {
   solvency,
   debtInterest,
   backerOffer,
+  backingById,
 } from './finance.js'
 import {
   makeHighlight,
@@ -124,7 +125,10 @@ export function newGame(opts = {}) {
     seed = Math.floor(Math.random() * 2 ** 31),
     startYear = 2026,
     difficulty = 'normal',
+    backing = 'club',
   } = opts
+
+  const backed = backingById(backing)
 
   const rng = new Rng(seed)
   const world = createWorld(rng, startYear)
@@ -245,8 +249,28 @@ export function newGame(opts = {}) {
       asianOrderOfMeritWins: 0,
     },
     finance: {
-      cash: 24000,
-      lifestyle: 'modest',
+      cash: backed.cash,
+      /**
+       * Spartan, not modest. A modest year costs $110,000 and an amateur one
+       * $38,500 of that — more than any starting position here except family
+       * money. Defaulting a player into a life they cannot pay for meant
+       * every new career was in debt before it teed up, whatever they chose.
+       */
+      lifestyle: 'spartan',
+      backing: backed.id,
+      // Times the club job has been the only reason there was a season.
+      workedThrough: 0,
+      backer: backed.stake
+        ? {
+            name: backed.stake.name,
+            cut: backed.stake.cut,
+            years: backed.stake.years,
+            yearsLeft: backed.stake.years,
+            amount: backed.cash,
+            signedYear: startYear,
+            paidBack: 0,
+          }
+        : null,
       dependents: 0,
       seasonPrizeGross: 0,
       seasonPrizeNet: 0,
@@ -378,6 +402,38 @@ export function playerSolvency(state) {
 }
 
 /**
+ * What a player with no track record can reasonably expect a season to pay.
+ *
+ * A season funds most of itself. Prize money arrives in April and pays for
+ * June, which is why a rookie enters twenty events on a bankroll that would
+ * cover four — and it is why treating a first season as a fixed bill against
+ * a standing balance is wrong in both directions. Costed that way, a
+ * generational prospect and a mini-tour long shot are equally unable to
+ * afford to play golf at all, which is the one thing that is certainly false.
+ *
+ * Deliberately conservative, and scaled by how good the player is against the
+ * field they have entered, so it never becomes a licence for a broke
+ * journeyman to plan a twenty-five-week year.
+ */
+function rookieExpectation(state) {
+  const list = state.phase === 'offseason' ? state.nextSeason : state.season
+  const target = state.phase === 'offseason' ? state.nextEntered : state.entered
+  let purse = 0
+  for (const id of Object.keys(target || {})) {
+    if (!target[id]) continue
+    const ev = list.find((e) => e.id === id)
+    if (ev) purse += ev.purse || 0
+  }
+  if (!purse) return 0
+  const avg = tourAverages(state)
+  const edge = avg ? overall(state.effRatings || state.player.ratings) - avg.ovr : 0
+  // A tour-average player banks well under one per cent of the money they tee
+  // up for; the very best bank a few. Halved again because it has not happened.
+  const share = clamp(0.006 + edge * 0.0011, 0.0015, 0.03)
+  return Math.round(purse * share * 0.5)
+}
+
+/**
  * How many tournaments this player can actually pay to enter next season.
  *
  * Travel and entry fees are due long before any prize money arrives, so a
@@ -393,12 +449,41 @@ export function seasonBudget(state) {
   const living = ls.cost * (1 + Math.min(state.finance.dependents, 4) * 0.18) * (amateur ? 0.35 : 1) * infl
   const staff = annualStaffCost(state.staff)
 
-  // Count on last season's money, discounted — this year might be worse.
-  const last = state.career.seasons[state.career.seasons.length - 1]
-  const expected = last ? Math.max(0, (last.prizeNet || 0) * 0.7 + (last.endorse || 0) * 0.9) : 0
+  /**
+   * Count on last season's money, discounted — this year might be worse. But
+   * only a *professional* season predicts a professional one: an amateur year
+   * pays nothing by definition, and reading it as a forecast told a player
+   * turning pro that they could expect to earn nothing again, which trimmed
+   * their first paid season to the bare floor of six starts. A player who has
+   * never been paid to play has no track record, whichever way they arrived.
+   */
+  const paid = state.career.seasons.filter((x) => x.status !== 'amateur')
+  const last = paid[paid.length - 1]
+  const expected = last
+    ? Math.max(0, (last.prizeNet || 0) * 0.7 + (last.endorse || 0) * 0.9)
+    : rookieExpectation(state)
   const sponsorNow = sponsorIncome(state.sponsors.deals) * 0.65
+  /**
+   * A winter behind the counter is income, and at the bottom of the game it is
+   * most of it — for a player coming off an unpaid amateur year it can be more
+   * than the golf will pay. Leaving it out of the budget meant the one player
+   * who had actually arranged to fund a season was told they could not afford
+   * one, and trimmed to the floor for it.
+   */
+  const working = (TRAINING_OPTIONS.find((t) => t.id === state.training.choice) || {}).work
+  const workNext = working ? winterWorkPay(state) : 0
 
-  return Math.round(state.finance.cash + s.headroom + expected + sponsorNow - living - staff)
+  /**
+   * The whole credit line is spendable, and that is not a mistake: borrowing
+   * against a season is exactly what the money is for, and a rookie who
+   * refused to would never play enough golf to earn any. What was wrong was
+   * never the fraction — it was that an amateur's schedule was costed at
+   * amateur prices and then played at professional ones. That is re-priced at
+   * the tee now. Trimming this figure any further makes a first season
+   * unfundable by arithmetic, because living costs are subtracted in full
+   * against a player who has not yet had the chance to win anything.
+   */
+  return Math.round(state.finance.cash + s.headroom + expected + sponsorNow + workNext - living - staff)
 }
 
 /** What the schedule as currently entered will cost to travel to. */
@@ -1626,7 +1711,7 @@ function endSeason(state, rng) {
   const training = TRAINING_OPTIONS.find((t) => t.id === state.training.choice)
   let workPay = 0
   if (training?.work) {
-    workPay = Math.round(WINTER_WORK_PAY * inflation(state.yearsElapsed))
+    workPay = winterWorkPay(state)
     state.finance.cash += workPay
   }
 
@@ -1640,6 +1725,22 @@ function endSeason(state, rng) {
 
   const invest = investmentReturn(rng, Math.max(0, state.finance.cash))
   state.finance.cash += invest
+
+  /**
+   * A year in the black buys back one favour, not all of them. Three lean
+   * years at twenty-four should not be the reason a career ends at thirty-one,
+   * but people remember the last few years and not only the last one.
+   *
+   * This binds rarely and changes nothing measurable in the current numbers —
+   * players in this state are almost never in the black at the end of a year,
+   * and what actually sustains them is taking the winter work voluntarily,
+   * before insolvency, which costs no favour at all. Kept because a decrement
+   * is the rule that survives future tuning; a full wipe is the one that would
+   * quietly become an infinite lifeline the moment the balance did tick over.
+   */
+  if (state.finance.cash >= 0 && state.finance.workedThrough > 0) {
+    state.finance.workedThrough -= 1
+  }
 
   recomputeRanks(state.world.players, true)
   const seasonRow = {
@@ -1837,11 +1938,59 @@ function applyLifeEvent(state, ev) {
 export function canFundSeason(state) {
   const s = playerSolvency(state)
   if (!s.insolvent) return { ok: true, solvency: s }
+  /**
+   * Before a career ends, the club job.
+   *
+   * Nobody who has spent their life getting good at this quits in November
+   * because the sums did not work. They go behind the counter at the club,
+   * teach through the winter, take the corporate days, and turn up in
+   * February with enough to enter something. That is the ordinary story of
+   * the bottom of professional golf, and without it the game ended careers
+   * at twenty-three over a five-figure hole that one winter of work covers.
+   *
+   * It only postpones. The debt is still there, the interest still runs, and
+   * a player who loses money every year eventually cannot work their way back
+   * inside the line — which is how these careers really end: not one bad
+   * season, but six, and then you are thirty and the club offers you the head
+   * job for real.
+   */
+  const work = winterWorkPay(state)
+  const left = reprievesLeft(state)
+  if (work > 0 && left > 0 && s.debt - work < s.limit) {
+    return { ok: true, solvency: s, mustWork: true, workPay: work, reprievesLeft: left }
+  }
   return {
     ok: false,
     solvency: s,
-    reason: `You owe ${fmtMoney(s.debt)} and there is no credit left to fly to a tournament on.`,
+    reprievesLeft: left,
+    reason:
+      left > 0
+        ? `You owe ${fmtMoney(s.debt)}, and a winter behind the counter no longer covers the gap.`
+        : `${fmtMoney(s.debt)} down, and you have taken the club job to fund a season one time too many. This time they offer it to you for good.`,
   }
+}
+
+/** What a winter on the lesson tee is worth in this year's money. */
+export function winterWorkPay(state) {
+  return Math.round(WINTER_WORK_PAY * inflation(state.yearsElapsed))
+}
+
+/**
+ * How many more times the club job can buy another season.
+ *
+ * Working a winter to fund a year is a bridge, not an income. Left unbounded
+ * it becomes one: a player can hover a hundred thousand down for two decades,
+ * insolvent every November and teeing up every February, and no career ends
+ * that way. What actually runs out is other people's patience, and it runs
+ * out on a schedule set by age, because the whole bottom of this sport is
+ * financed on the belief that somebody is about to come good. Nobody funds a
+ * thirty-six-year-old's fifth comeback; they will fund a twenty-four-year-old's
+ * fourth without much thought.
+ */
+export function reprievesLeft(state) {
+  const age = state.player.age
+  const allowed = age <= 26 ? 4 : age <= 30 ? 3 : age <= 35 ? 2 : 1
+  return Math.max(0, allowed - (state.finance.workedThrough || 0))
 }
 
 /**
@@ -1868,6 +2017,24 @@ export function startSeason(state) {
   const rng = Rng.from(state.rngState)
   const p = state.player
   const wasFirst = state.offseason?.isFirst
+
+  /**
+   * If the only reason there is a season at all is the club job, then that is
+   * what the winter was. Committed here rather than in the auto-manager so a
+   * hand-played career pays the same price for the same rescue — and so the
+   * training the player picked is overwritten by the work they actually had
+   * to do, which is the whole point of the trade.
+   */
+  const funding = canFundSeason(state)
+  if (funding.mustWork) {
+    state.training.choice = 'work'
+    state.finance.workedThrough = (state.finance.workedThrough || 0) + 1
+    pushNews(
+      state,
+      `No money and no credit. You take the winter on at the club — lessons, the shop, corporate days — to fund one more season.`,
+      'bad',
+    )
+  }
 
   if (!wasFirst) {
     // Age everyone, develop everyone.
@@ -1973,6 +2140,14 @@ export function startSeason(state) {
    * entry, and earned nothing all year.
    *
    * Drop what is no longer open, then fill the freed weeks with what is.
+   *
+   * And then re-price it. An amateur schedule was costed as an amateur
+   * schedule: $2,200 a week to drive to it, and living at the 35% rate that
+   * comes with sleeping in spare rooms. The same eighteen weeks as a
+   * professional are emerging-tour events at $4,500 and a full-rate life, so
+   * the budget the autumn signed off on buys roughly half of what it did. Fill
+   * and walk away and the player starts their career committed to a season
+   * that costs more than their entire credit line.
    */
   if (turnedPro) {
     const wanted = Object.keys(state.entered).length
@@ -1981,6 +2156,7 @@ export function startSeason(state) {
       if (!ev || !checkEligibility(state, ev).ok) delete state.entered[id]
     }
     if (wanted > 0 && Object.keys(state.entered).length < wanted) autoFillSchedule(state, wanted)
+    trimScheduleToBudget(state)
   }
 
   state.lastResult = null
@@ -2124,7 +2300,8 @@ export function autoOffseason(state, opts = {}) {
   // stretched year is not a reason to give a stranger a quarter of your career.
   const solvNow = playerSolvency(state).state
   if (state.offseason?.backerOffer && (solvNow === 'critical' || solvNow === 'insolvent')) acceptBacker(state)
-  if (!canFundSeason(state).ok) {
+  const funding = canFundSeason(state)
+  if (!funding.ok) {
     foldCareer(state)
     return
   }
@@ -2136,8 +2313,15 @@ export function autoOffseason(state, opts = {}) {
   // Re-evaluate every year — a focus chosen five seasons ago is rarely still
   // the right one.
   state.training.choice = pickAutoTraining(state)
-  // Somebody who cannot pay their bills spends the winter earning, not drilling.
-  if (playerSolvency(state).state === 'critical' || state.finance.cash < -currentBurn(state) * 0.4) {
+  /**
+   * Somebody who cannot pay their bills spends the winter earning, not
+   * drilling. The old test named the 'critical' band explicitly and so missed
+   * 'insolvent' entirely — the one player in the game who unambiguously needs
+   * the money was the one who never took the job. Read the debt against the
+   * credit line instead, which covers every band above it, and take the work
+   * whenever funding the season depends on it.
+   */
+  if (funding.mustWork || playerSolvency(state).used > 0.55 || state.finance.cash < -currentBurn(state) * 0.4) {
     state.training.choice = 'work'
   }
   // Take the best sponsorship offers that are on the table.
@@ -2153,8 +2337,37 @@ export function autoOffseason(state, opts = {}) {
 }
 
 /** Live within your means — what a sensible person would do between seasons. */
+/**
+ * How much a year is about to cost, for a decision taken before the schedule
+ * that year exists.
+ *
+ * `currentBurn` prices the schedule that is currently entered, and in an
+ * offseason that is nothing yet — the auto-manager sets the lifestyle first
+ * and builds the schedule afterwards. So the runway that chooses how to live
+ * was counting the rent and none of the flights, and a bankroll that covers
+ * four months of a real season looked like fourteen months of a stationary
+ * one. The tell was that it got *worse* as the default got cheaper: starting
+ * a player on spartan raised their apparent runway past the threshold and the
+ * auto-manager promptly moved them up to modest, which is the opposite of
+ * what a cheaper default is for.
+ */
+function plannedBurn(state) {
+  const entered = Object.values(projectedStartsByCircuit(state)).reduce((a, b) => a + b, 0)
+  if (entered > 0) return currentBurn(state)
+  const p = state.player
+  const circuit = p.status === 'amateur' ? 'amateur' : p.homeCircuit || 'emerging'
+  return annualExpenses({
+    lifestyleId: state.finance.lifestyle,
+    staffCost: annualStaffCost(state.staff),
+    startsByCircuit: { [circuit]: defaultTargetStarts(p) },
+    yearsElapsed: state.yearsElapsed,
+    dependents: state.finance.dependents,
+    amateur: p.status === 'amateur',
+  }).total
+}
+
 function autoBudget(state) {
-  const burn = currentBurn(state)
+  const burn = plannedBurn(state)
   const cash = state.finance.cash
   const runway = burn > 0 ? cash / burn : 99
   const tiers = ['spartan', 'modest', 'comfortable', 'luxury', 'superstar']
