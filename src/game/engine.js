@@ -1400,6 +1400,31 @@ export function advanceOneWeek(state, rng) {
   let userEvent = userEventId ? state.season.find((e) => e.id === userEventId) : null
   const p = state.player
 
+  /**
+   * A schedule is built weeks or months before it is played, against a state
+   * that has since moved on, and nothing ever rechecked it. Two things got
+   * through: a player who turned professional still had a season of amateur
+   * events entered and teed up in all of them for no money, and the Tour
+   * Championship stayed entered from one year to the next so it was played
+   * every season whether or not it had been earned.
+   *
+   * Entry is a plan; this is the starter's tent.
+   */
+  if (userEvent) {
+    const elig = checkEligibility(state, userEvent)
+    if (!elig.ok) {
+      pushLog(state, {
+        week,
+        year: state.year,
+        kind: 'wd',
+        text: `Not in the field for ${withArticle(userEvent.name)}.`,
+        detail: elig.reason,
+      })
+      delete state.entered[userEvent.id]
+      userEvent = null
+    }
+  }
+
   // An injury that keeps you out withdraws you from the week's event.
   let withdrew = false
   if (userEvent && p.injury && p.injury.out) {
@@ -1901,7 +1926,9 @@ export function startSeason(state) {
   }
 
   // Turning pro.
+  let turnedPro = false
   if (p.status === 'amateur' && (state.pendingTurnPro || p.age >= 24)) {
+    turnedPro = true
     p.status = 'pro'
     p.homeCircuit = 'emerging'
     state.pendingTurnPro = false
@@ -1936,6 +1963,24 @@ export function startSeason(state) {
       'The ball has been rolled back. Everything flies shorter from this season, and the courses do not get any shorter with it.',
       'info',
     )
+  }
+
+  /**
+   * Turning professional voids an amateur schedule, and the schedule was built
+   * last autumn by somebody who was still an amateur. Sixteen of a first
+   * season's eighteen starts were amateur events the player was no longer
+   * allowed to enter — they teed up in them anyway, because nothing rechecked
+   * entry, and earned nothing all year.
+   *
+   * Drop what is no longer open, then fill the freed weeks with what is.
+   */
+  if (turnedPro) {
+    const wanted = Object.keys(state.entered).length
+    for (const id of Object.keys(state.entered)) {
+      const ev = state.season.find((e) => e.id === id)
+      if (!ev || !checkEligibility(state, ev).ok) delete state.entered[id]
+    }
+    if (wanted > 0 && Object.keys(state.entered).length < wanted) autoFillSchedule(state, wanted)
   }
 
   state.lastResult = null
@@ -2057,7 +2102,20 @@ export function simToAge(state, targetAge, opts = {}) {
 export function autoOffseason(state, opts = {}) {
   const rng = Rng.from(state.rngState)
   state.rngState = rng.s
-  if (state.player.status === 'amateur' && state.player.age >= 21) state.pendingTurnPro = true
+  /**
+   * Play the amateur season you started with, then turn professional.
+   *
+   * The auto-manager used to turn pro at 21, which made the amateur circuit
+   * dead content for two of the three starting ages — it only looked reachable
+   * because a bug let professionals go on playing amateur events. Keyed off
+   * seasons played rather than age, because an offseason is preparing next
+   * season and the age does not tick over until it starts: an age test here
+   * costs two amateur years, not one. startSeason still forces the issue at 24
+   * for anybody dawdling.
+   */
+  if (state.player.status === 'amateur' && (state.player.age >= 22 || state.career.seasons.length >= 1)) {
+    state.pendingTurnPro = true
+  }
 
   // Money first, because it decides whether there is a season at all. Take a
   // backer if one is on the table, and if there is not and the credit is gone,
@@ -2423,6 +2481,10 @@ export function autoFillSchedule(state, targetStarts) {
   const byWeek = new Map()
   for (const ev of list) {
     if (ev.week < fromWeek) continue
+    // Nobody enters a season finale, and during an offseason the standings
+    // still hold last year's points — so it looked eligible and got picked,
+    // then stayed entered into a season it had not been earned in.
+    if (ev.finale) continue
     const elig = checkEligibility(probe, ev)
     if (!elig.ok) continue
     const score = eventAttractiveness(ev, p, marketability(p, state.career))
@@ -2510,13 +2572,32 @@ function defaultTargetStarts(p) {
   return 25
 }
 
-function eventAttractiveness(ev, p, market = 0) {
+export function eventAttractiveness(ev, p, market = 0) {
   const prestige = CIRCUITS[ev.circuit].prestige
   const money = Math.log10(Math.max(1, ev.purse)) / 7
   let score = prestige * 2.2 + money * 1.6 + (ev.isMajor ? 6 : 0) + (ev.flagship ? 0.8 : 0)
-  // Guaranteed money is worth more than the same figure of prize money, which
-  // is the whole reason a name gets on the plane.
-  if (paysAppearanceFees(ev) && market >= 0.45) score += Math.log10(Math.max(1, appearanceFee(ev, market, 0))) / 4
+
+  /**
+   * Guaranteed money is a reason to get on a plane, but only a small one, and
+   * this got it badly wrong when appearance fees were added.
+   *
+   * It was `log10(fee) / 4`, which is a flat offset of about 1.5 for any fee
+   * worth having — while the entire purse range, from a $1m mini-tour week to
+   * a $26m major, only moves this score by 0.32, because the money term is
+   * deliberately compressed. So any appearance fee at all swamped every other
+   * financial consideration: a $6.2m international stop scored 4.70 against a
+   * $24.2m domestic flagship's 4.69, and the auto-schedule sent a marketable
+   * player abroad nearly every week of the year.
+   *
+   * It also priced every week as the *first* fee of the season, ignoring the
+   * diminishing returns that exist precisely to stop a player collecting a
+   * full cheque forty times. Priced at a mid-season slot now, and capped at
+   * roughly the gap between two circuits' prestige — enough to tip a choice
+   * between comparable weeks, never enough to beat a bigger tour.
+   */
+  if (paysAppearanceFees(ev) && market >= 0.45) {
+    score += clamp(appearanceFee(ev, market, 5) / 1_500_000, 0, 1) * 0.4
+  }
   // An amateur cannot cash a cheque, so there is no point paying entry fees to
   // play for money you are not allowed to keep.
   if (p.status === 'amateur') {
