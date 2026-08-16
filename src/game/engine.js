@@ -33,6 +33,7 @@ import {
 } from './world.js'
 import { makeEntrant, simTournament } from './tournament.js'
 import { prepEdgeFor, venueEdgeFor } from './venue.js'
+import { eraLabel, eraStrength, isRollbackYear, yardsAdded } from './era.js'
 import { FINALE_FIELD, FINALE_ID, bonusFor, racePosition, raceStandings, raceTitle } from './race.js'
 import {
   CUP_WEEK,
@@ -1626,6 +1627,13 @@ function prepareOffseason(state, isFirst, rng) {
   state.phase = 'offseason'
   state.week = PLAYING_WEEKS + 1
 
+  // The offseason before a career's first season is preparing season zero, not
+  // season one. `upcomingYear` already compensates for this when labelling the
+  // year; everything built here was quietly a season ahead — purses inflated
+  // by a year that had not happened, and now an arms race a year further on
+  // than a rookie's first tee shot.
+  const forSeason = state.yearsElapsed + (isFirst ? 0 : 1)
+
   const cardNotes = isFirst ? [] : resolveCards(state, rng)
 
   // Sponsors roll over; underperformance costs deals.
@@ -1656,19 +1664,19 @@ function prepareOffseason(state, isFirst, rng) {
 
   const taken = new Set(state.world.players.map((x) => x.name))
   state.staffMarket = generateStaffMarket(rng, rep, taken)
-  state.equipCatalog = generateEquipmentCatalog(rng, state.yearsElapsed + 1, state.year + 1)
+  state.equipCatalog = generateEquipmentCatalog(rng, forSeason, state.year + (isFirst ? 0 : 1))
   state.sponsors.offers = generateOffers(
     rng,
     state.player,
     state.career,
     state.staff,
     state.sponsors.deals,
-    state.yearsElapsed + 1,
+    forSeason,
     sponsorMultiplier(state.staff),
   )
 
   // Next season's fixtures, so the schedule can be built now.
-  state.nextSeason = buildSeason(state.fixtures, state.yearsElapsed + 1, rng)
+  state.nextSeason = buildSeason(state.fixtures, forSeason, rng)
   state.nextEntered = {}
   state.qSchool = null
 
@@ -1866,6 +1874,14 @@ export function startSeason(state) {
   state.week = 1
   state.phase = 'season'
   state.offseason = null
+  if (isRollbackYear(state.yearsElapsed)) {
+    pushNews(
+      state,
+      'The ball has been rolled back. Everything flies shorter from this season, and the courses do not get any shorter with it.',
+      'info',
+    )
+  }
+
   state.lastResult = null
   state.lastCircuitPlayed = null
   // A whole winter at home clears any body clock.
@@ -2046,10 +2062,16 @@ function autoBudget(state) {
 function pickAutoTraining(state) {
   const p = state.player
   if (p.fatigue > 62 || p.morale < 32) return 'rest'
+  // Train towards the biggest gap, nudged by what the game is paying for. A
+  // tie-breaker, not a strategy: distance carries the lowest weight in overall
+  // and declines fastest, so a trainer that chased the arms race hard ended up
+  // building worse players who missed the majors entirely.
+  const era = eraStrength(state.yearsElapsed)
+  const pull = { power: 1 + era * 0.6, accuracy: 1 - era * 0.18, shortGame: 1 - era * 0.12 }
   let worst = null
   let gap = -Infinity
   for (const k of ATTR_KEYS) {
-    const g = p.potential[k] - p.ratings[k]
+    const g = (p.potential[k] - p.ratings[k]) * (pull[k] || 1)
     if (g > gap) {
       gap = g
       worst = k

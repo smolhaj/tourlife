@@ -19,6 +19,7 @@ import { venueEdge, familiarityLabel, prepEdgeFor } from '../src/game/venue.js'
 import { beddingIn, equipmentBonus, equipItem, startsToSettle, sponsorGear } from '../src/game/equipment.js'
 import { CUPS, CUP_WEEK, cupForYear, recordText, selectTeam, simCup } from '../src/game/teamcup.js'
 import { REGIONS } from '../src/game/names.js'
+import { ROLLBACK_YEAR, eraEdgeOf, eraStrength, yardsAdded } from '../src/game/era.js'
 import { BONUS_PLACES, BONUS_POOL, FINALE_FIELD, FINALE_ID, FINALE_WEEK, bonusFor, racePosition, raceStandings } from '../src/game/race.js'
 import { AILMENTS, relapseWeight, residualDamage, rollSetback, slumpRecovery } from '../src/game/injuries.js'
 
@@ -2028,6 +2029,150 @@ section('SCENARIO 32 — a table you can watch all year')
   check('the race history survives a save', back.career.raceHistory.length === great.career.raceHistory.length)
   console.log(`   over 16 seasons a great player made the finale ${finalesFor(great)} times for ${fmtMoney(great.career.raceBonusTotal, { compact: true })}; a journeyman ${finalesFor(okay)}`)
   console.log(`   their race finishes: ${great.career.raceHistory.map((h) => h.pos).join(', ')}`)
+}
+
+section('SCENARIO 33 — thirty years of the golf course getting longer')
+{
+  // Equipment tech crept up forever and nothing moved with it: courses never
+  // lengthened, and driving distance was worth the same in a player's
+  // thirtieth season as in their first.
+  check('a rookie season is the baseline', eraStrength(0) === 0)
+  check('the game drifts towards length', eraStrength(10) > eraStrength(5) && eraStrength(5) > 0)
+  check('and the courses grow with it', yardsAdded(10) > yardsAdded(5) && yardsAdded(0) === 0)
+  check('the rollback takes most of it back', eraStrength(ROLLBACK_YEAR) < eraStrength(ROLLBACK_YEAR - 1) * 0.6,
+    `${eraStrength(ROLLBACK_YEAR).toFixed(2)} vs ${eraStrength(ROLLBACK_YEAR - 1).toFixed(2)}`)
+  check('but the courses stay long', yardsAdded(ROLLBACK_YEAR) >= yardsAdded(ROLLBACK_YEAR - 1),
+    `${yardsAdded(ROLLBACK_YEAR)} vs ${yardsAdded(ROLLBACK_YEAR - 1)}`)
+  check('and the creep resumes, more slowly', eraStrength(40) > eraStrength(ROLLBACK_YEAR))
+  check('it never reaches the pre-rollback peak within a career',
+    eraStrength(40) < eraStrength(ROLLBACK_YEAR - 1), `${eraStrength(40).toFixed(2)}`)
+
+  const bomber = { ...emptyRatings(60), power: 85, accuracy: 45, shortGame: 55, consistency: 55 }
+  const plodder = { ...emptyRatings(60), power: 42, accuracy: 82, shortGame: 70, consistency: 75 }
+  check('length pays and straightness does not', eraEdgeOf(bomber) > 0 && eraEdgeOf(plodder) < 0,
+    `${eraEdgeOf(bomber).toFixed(2)} / ${eraEdgeOf(plodder).toFixed(2)}`)
+  check('an average player is unaffected by the era', Math.abs(eraEdgeOf(emptyRatings(50))) < 1e-9)
+  // Zero-sum, or ranking points would inflate decade on decade.
+  const spread = { ...emptyRatings(50) }
+  let total = 0
+  for (const k of ['power', 'accuracy', 'shortGame', 'consistency', 'irons', 'putting']) {
+    const one = { ...spread, [k]: 60 }
+    total += eraEdgeOf(one)
+  }
+  check('the coefficients cancel across the attributes', Math.abs(total) < 1e-9, `${total}`)
+  const peak = eraStrength(ROLLBACK_YEAR - 1) * eraEdgeOf(bomber)
+  check('the shipped swing is worth about half a shot at its peak',
+    peak * 0.34 > 0.25 && peak * 0.34 < 0.9, `${(peak * 0.34).toFixed(2)} strokes`)
+  console.log(`   by year ${ROLLBACK_YEAR - 1} a bomber is ${(peak * 0.34).toFixed(2)} shots better off and a short hitter the same worse; courses are ${yardsAdded(ROLLBACK_YEAR - 1)} yards longer`)
+
+  // And it has to reach the leaderboard without changing how hard golf is.
+  const EVE = { id: 'e', name: 'E', courseType: 'classic', difficulty: 1, fieldSize: 144, cutSize: 65, purse: 8e6, circuit: 'domestic' }
+  const measure = (era) => {
+    const rng = new Rng(6161)
+    let bomberPos = 0
+    let plodderPos = 0
+    let winner = 0
+    let strength = 0
+    const N = 400
+    for (let i = 0; i < N; i++) {
+      const field = [
+        makeEntrant({ pid: 1, name: 'Bomber', playstyle: 'balanced', form: 0, fatigue: 0 }, bomber, EVE),
+        makeEntrant({ pid: 2, name: 'Plodder', playstyle: 'balanced', form: 0, fatigue: 0 }, plodder, EVE),
+      ]
+      for (let j = 3; j <= EVE.fieldSize; j++) {
+        const r = emptyRatings(Math.round(rng.gaussClamped(62, 8)))
+        field.push(makeEntrant({ pid: j, name: `P${j}`, playstyle: 'balanced', form: 0, fatigue: 0 }, r, EVE))
+      }
+      const out = simTournament({ ...EVE, era }, field, rng)
+      bomberPos += out.results.find((r) => r.pid === 1).toPar
+      plodderPos += out.results.find((r) => r.pid === 2).toPar
+      winner += out.winner.toPar
+      strength += out.strengthMult
+    }
+    return { bomber: bomberPos / N, plodder: plodderPos / N, winner: winner / N, strength: strength / N }
+  }
+  // Measured at an exaggerated era rather than the shipped one. A tournament
+  // of 144 players has a standard error of about a third of a shot at this
+  // sample size, and the shipped effect is half a shot — detectable, but only
+  // barely, so a direction test on it would fail on noise as often as on a
+  // real regression. The magnitude that actually ships is pinned analytically
+  // above; this checks that it reaches a scorecard at all.
+  const early = measure(0)
+  const late = measure(eraStrength(ROLLBACK_YEAR - 1) * 4)
+  check('the bomber scores better in the modern game', late.bomber < early.bomber - 0.3,
+    `${late.bomber.toFixed(2)} vs ${early.bomber.toFixed(2)}`)
+  check('the short hitter scores worse', late.plodder > early.plodder + 0.3,
+    `${late.plodder.toFixed(2)} vs ${early.plodder.toFixed(2)}`)
+  // Courses lengthen precisely so scoring holds. If the winning score drifted,
+  // every historical comparison in the game would be worthless.
+  check('but golf is not any harder or easier', Math.abs(late.winner - early.winner) < 0.7,
+    `winning ${early.winner.toFixed(1)} then ${late.winner.toFixed(1)}`)
+  check('and the field is not any stronger', Math.abs(late.strength - early.strength) < 0.02,
+    `${early.strength.toFixed(3)} vs ${late.strength.toFixed(3)}`)
+  console.log(`   same two players, same course: bomber ${early.bomber.toFixed(1)} → ${late.bomber.toFixed(1)}, short hitter ${early.plodder.toFixed(1)} → ${late.plodder.toFixed(1)}, winning score ${early.winner.toFixed(1)} → ${late.winner.toFixed(1)}`)
+
+  // The calendar has to carry it.
+  const s = E.newGame({ name: 'Era', seed: 77, talent: 0.6, age: 22 })
+  E.autoOffseason(s)
+  E.startSeason(s)
+  check('every event knows what era it is', s.season.every((e) => typeof e.era === 'number'),
+    `${s.season.filter((e) => typeof e.era !== 'number').length} without one`)
+  check('a first season is the baseline everywhere', s.season.every((e) => e.era === 0))
+}
+
+section('SCENARIO 34 — how often the great ones actually win')
+{
+  // I flagged major frequency as too generous at the top end. Measured against
+  // strike rates rather than raw totals, it is not — it is conservative. The
+  // counts look large because these careers play about 580 events and 84
+  // majors across twenty-five years, which is an ordinary tour workload;
+  // Woods played 375 and 68 and was unusual for playing so few.
+  //
+  // Anchors: Woods 15 majors from 68 starts (22%) and 82 wins from 375 (22%);
+  // Snead 82 wins from about 700 (12%); Mickelson 6 majors and 45 wins from
+  // about 700 (6%). Pinned here so a future change to field strength or
+  // scoring cannot quietly drift the top of the game past the real one.
+  const careers = []
+  for (let i = 0; i < 10; i++) {
+    const s = E.newGame({ name: 'Great', seed: 700 + i * 137, talent: 0.86, age: 21 })
+    while (!s.player.retired && s.player.age < 46) {
+      E.autoOffseason(s)
+      if (s.player.retired) break
+      E.startSeason(s)
+      E.simToOffseason(s)
+    }
+    const majStarts = s.career.allResults.filter((r) => r.isMajor).length
+    careers.push({
+      majors: s.career.majors,
+      majStarts,
+      majRate: majStarts ? s.career.majors / majStarts : 0,
+      wins: s.career.wins,
+      starts: s.career.starts,
+      winRate: s.career.starts ? s.career.wins / s.career.starts : 0,
+    })
+  }
+  careers.sort((a, b) => b.majRate - a.majRate)
+  const best = careers[0]
+  const bestWin = careers.reduce((a, b) => (b.winRate > a.winRate ? b : a))
+
+  check('the best major record of a generation is short of Woods', best.majRate < 0.22,
+    `${(100 * best.majRate).toFixed(1)}% against his 22%`)
+  check('but it is a real major record', best.majRate > 0.06, `${(100 * best.majRate).toFixed(1)}%`)
+  check('the best win rate is short of Woods too', bestWin.winRate < 0.22,
+    `${(100 * bestWin.winRate).toFixed(1)}%`)
+  check('and around where the great volume winners sat', bestWin.winRate > 0.07,
+    `${(100 * bestWin.winRate).toFixed(1)}%`)
+  const median = careers[Math.floor(careers.length / 2)]
+  check('a typical touted prospect is well short of all of them', median.majRate < 0.09,
+    `${(100 * median.majRate).toFixed(1)}%`)
+  check('nobody plays an implausible number of majors',
+    careers.every((c) => c.majStarts <= 100), `${Math.max(...careers.map((c) => c.majStarts))}`)
+  const spread = careers.map((c) => c.majors)
+  check('the outcomes spread rather than clustering', Math.max(...spread) - Math.min(...spread) >= 5,
+    spread.join(','))
+  console.log(`   best of ten elite careers: ${best.majors} majors from ${best.majStarts} starts (${(100 * best.majRate).toFixed(1)}%, Woods was 22%)`)
+  console.log(`   best win rate: ${bestWin.wins} from ${bestWin.starts} (${(100 * bestWin.winRate).toFixed(1)}%, Snead about 12%)`)
+  console.log(`   major counts across the ten: ${spread.join(', ')}`)
 }
 
 // ---------------------------------------------------------------------------

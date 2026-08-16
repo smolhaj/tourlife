@@ -1,5 +1,6 @@
 import { CIRCUITS, COURSE_TYPE_KEYS, TRAVEL_ZONE, PLAYING_WEEKS, OFFSEASON_WEEK } from './constants.js'
 import { FINALE_FIELD, FINALE_ID, FINALE_WEEK } from './race.js'
+import { eraStrength } from './era.js'
 
 // Re-exported so every existing importer keeps working; defined in constants
 // so the season race can reach it without a cycle.
@@ -297,6 +298,7 @@ export function buildSeason(fixtures, yearsElapsed, rng) {
       isMajor: !!f.isMajor,
       seniorMajor: !!f.seniorMajor,
       finale: !!f.finale,
+      era: eraStrength(yearsElapsed),
       zone: f.zone || TRAVEL_ZONE[f.circuit] || 'home',
       blurb: f.blurb,
     }
