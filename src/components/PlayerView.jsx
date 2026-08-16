@@ -6,6 +6,7 @@ import { careerPhase, majorNarrative, legacyScore, legacyLabel } from '../game/n
 import { equipmentBonus, bagTech, techBaseline, startsToSettle } from '../game/equipment.js'
 import { describeStaff, rapportLabel } from '../game/staff.js'
 import { eraLabel } from '../game/era.js'
+import { strainBand, strainLine, hasPartner, familyLabel, ULTIMATUM_STARTS } from '../game/family.js'
 import { STAT_DEFS, formatStat, scoringAverage, statRanks, tourStatAverages } from '../game/stats.js'
 import { STAFF_ROLES, EQUIP_SLOTS } from '../game/constants.js'
 import { fmtMoney } from '../game/finance.js'
@@ -148,6 +149,8 @@ export default function PlayerView({ state }) {
           </div>
         </Card>
 
+        <Home state={state} />
+
         <Card title="Support team">
           {STAFF_ROLES.map((role) => (
             <div key={role.id} className="row between center" style={{ padding: '5px 0', borderBottom: '1px solid var(--line-soft)' }}>
@@ -211,6 +214,83 @@ export default function PlayerView({ state }) {
         </Card>
       </div>
     </div>
+  )
+}
+
+/**
+ * The people the tour is being played instead of.
+ *
+ * A career was thirty weeks a year in another time zone and the only trace of
+ * that anywhere in the game was an integer called `dependents` buried in the
+ * cost of living. Whoever is at home has a name now, the children have names
+ * and ages, and the strain the schedule puts on them is on the same screen as
+ * the schedule that causes it.
+ */
+function Home({ state }) {
+  const fam = state.family
+  if (!fam) return null
+  const band = strainBand(fam.strain)
+  const partner = hasPartner(fam) ? fam.partner : null
+  const kids = fam.kids || []
+  const recent = (fam.history || []).slice(-4).reverse()
+
+  return (
+    <Card title="Home" aux={familyLabel(fam)}>
+      {partner ? (
+        <>
+          <div className="row between center">
+            <div>
+              <div className="small b">{partner.name}</div>
+              <div className="xs muted-2">
+                {fam.status === 'married' ? 'Married' : 'Together'} since {partner.since}
+              </div>
+            </div>
+            <Chip tone={band.tone}>{band.label}</Chip>
+          </div>
+          <div className="xs muted" style={{ marginTop: 6 }}>
+            {strainLine(fam)}
+          </div>
+          {fam.cappedSince ? (
+            <div className="xs orange" style={{ marginTop: 6 }}>
+              You promised a {ULTIMATUM_STARTS}-start year in {fam.cappedSince}. The schedule is held to it.
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="xs muted">
+          {fam.status === 'divorced'
+            ? 'Divorced. The tour is the only thing on the calendar.'
+            : fam.status === 'separated'
+              ? `Separated from ${fam.partner ? fam.partner.name : 'your partner'}.`
+              : 'Nobody waiting up. Which makes the travel easier and the winters longer.'}
+        </div>
+      )}
+
+      {kids.length ? (
+        <>
+          <div className="hr" />
+          <div className="section-title">Children</div>
+          <div className="pill-row">
+            {kids.map((k) => (
+              <Chip key={`${k.name}-${k.born}`}>
+                {k.name} · {Math.max(0, state.year - k.born)}
+              </Chip>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {recent.length ? (
+        <>
+          <div className="hr" />
+          {recent.map((h, i) => (
+            <div key={`${h.year}-${i}`} className="xs muted-2" style={{ padding: '2px 0' }}>
+              <span className="mono">{h.year}</span> — {h.text}
+            </div>
+          ))}
+        </>
+      ) : null}
+    </Card>
   )
 }
 

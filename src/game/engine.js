@@ -72,6 +72,7 @@ import {
   negotiate,
 } from './sponsors.js'
 import { rollSetback, ailmentPenalty, residualDamage, slumpRecovery, AILMENTS } from './injuries.js'
+import { newFamily, familyYear, familyPressure, familyLabel, strainLine, hasPartner, ULTIMATUM_STARTS } from './family.js'
 import {
   splitPrize,
   appearanceFee,
@@ -280,6 +281,7 @@ export function newGame(opts = {}) {
       passiveIncome: 0,
       history: [],
     },
+    family: newFamily(),
     staff: emptyStaff(),
     staffMarket: null,
     bag: starterBag(rng, 0, startYear),
@@ -1723,6 +1725,9 @@ function endSeason(state, rng) {
     state.finance.interestPaid = (state.finance.interestPaid || 0) + interest
   }
 
+  // What the season cost the people at home, in weeks across an ocean.
+  state.lastSeasonLongHaul = longHaulWeeks(state).length
+
   const invest = investmentReturn(rng, Math.max(0, state.finance.cash))
   state.finance.cash += invest
 
@@ -1906,6 +1911,10 @@ function prepareOffseason(state, isFirst, rng) {
 
   // A life event, occasionally. The pool can be empty for a very young
   // player, and picking from an empty array crashes the offseason.
+  //
+  // Marriage, children and divorce have moved out of this table and into a
+  // state machine of their own — a flat random draw handed careers a divorce
+  // they had never married into, and four children in five years.
   if (!isFirst && rng.chance(0.22)) {
     const pool = LIFE_EVENTS.filter((e) => state.player.age >= e.minAge)
     if (pool.length) {
@@ -1915,7 +1924,123 @@ function prepareOffseason(state, isFirst, rng) {
     }
   }
 
+  if (!isFirst) runFamilyYear(state, rng)
+
   refreshDerived(state)
+}
+
+/**
+ * A year of home life, applied.
+ *
+ * `family.js` decides what happened; this puts it on the player. Dependents
+ * stay in sync with the actual household rather than being an integer that
+ * only ever went up, so a separation genuinely lowers the cost of living and
+ * genuinely raises what a career can still be.
+ */
+function runFamilyYear(state, rng) {
+  const fam = state.family
+  const last = state.career.seasons[state.career.seasons.length - 1]
+  const events = familyYear(fam, rng, {
+    age: state.player.age,
+    starts: last ? last.starts : 0,
+    longHaul: state.lastSeasonLongHaul || 0,
+    restedWinter: state.training.choice === 'rest',
+    lifestyleId: state.finance.lifestyle,
+    morale: state.player.morale,
+    broke: state.finance.cash < 0,
+    marketability: marketability(state.player, state.career, state.staff),
+  })
+
+  const told = []
+  for (const ev of events) {
+    switch (ev.id) {
+      case 'strain':
+        fam.strain = clamp(fam.strain + ev.by, 0, 1)
+        break
+      case 'met':
+        fam.status = 'partner'
+        fam.partner = { name: ev.name, since: state.year }
+        fam.strain = 0.05
+        told.push(`You met ${ev.name} in the offseason.`)
+        state.player.morale = clamp(state.player.morale + 6, 0, 100)
+        break
+      case 'married':
+        fam.status = 'married'
+        state.finance.dependents += 1
+        told.push(`You and ${fam.partner.name} got married.`)
+        state.player.morale = clamp(state.player.morale + 7, 0, 100)
+        break
+      case 'child': {
+        fam.kids.push({ name: ev.name, born: state.year })
+        state.finance.dependents += 1
+        told.push(`${ev.name} was born. Everything reorganises around it.`)
+        state.player.morale = clamp(state.player.morale + 8, 0, 100)
+        break
+      }
+      case 'ultimatum':
+        // Belt and braces: nobody who has already left can deliver one.
+        if (!fam.partner) break
+        fam.ultimatum = { year: state.year, partner: fam.partner.name }
+        state.offseason.ultimatum = fam.ultimatum
+        break
+      case 'separated':
+        fam.status = 'separated'
+        fam.strain = 0.8
+        told.push(`${fam.partner.name} has moved out.`)
+        state.player.morale = clamp(state.player.morale - 12, 0, 100)
+        break
+      case 'parted':
+        told.push(`You and ${fam.partner.name} went their separate ways. Nobody's fault but the calendar's.`)
+        fam.status = 'single'
+        fam.partner = null
+        fam.strain = 0
+        state.player.morale = clamp(state.player.morale - 7, 0, 100)
+        break
+      case 'reconciled':
+        fam.status = 'married'
+        fam.strain = 0.45
+        told.push(`You and ${fam.partner.name} are trying again.`)
+        state.player.morale = clamp(state.player.morale + 9, 0, 100)
+        break
+      case 'divorced':
+        applyDivorce(state, `The marriage did not survive the travel.`)
+        break
+      default:
+        break
+    }
+  }
+  for (const line of told) {
+    fam.history.push({ year: state.year, text: line })
+    pushNews(state, line, 'life')
+  }
+  if (fam.history.length > 40) fam.history = fam.history.slice(-40)
+}
+
+/**
+ * What leaving costs. Half of everything, the household, and a year of not
+ * being much use — which is the honest version and also the one that makes
+ * the ultimatum a real decision rather than a free morale hit.
+ */
+export function applyDivorce(state, text) {
+  const fam = state.family
+  const kids = fam.kids.length
+  fam.status = 'divorced'
+  fam.strain = 0
+  fam.ultimatum = null
+  fam.hadUltimatum = true
+  // The children are still yours to support; the household is not.
+  state.finance.dependents = Math.max(0, kids)
+  state.finance.cash = Math.round(state.finance.cash * (state.finance.cash > 0 ? 0.55 : 1.15))
+  state.player.morale = clamp(state.player.morale - 18, 0, 100)
+  state.player.ratings.mental = clamp(state.player.ratings.mental - 3, 5, 99)
+  const line = text || `You and ${fam.partner ? fam.partner.name : 'your partner'} divorced.`
+  fam.history.push({ year: state.year, text: line })
+  pushNews(state, line, 'bad')
+  addHighlight(state, 'milestone', {
+    title: 'The marriage ended',
+    text: `${line}${kids ? ` ${kids === 1 ? 'A child' : `${kids} children`} you now see between tournaments.` : ''}`,
+    importance: 4,
+  })
 }
 
 function applyLifeEvent(state, ev) {
@@ -1927,6 +2052,81 @@ function applyLifeEvent(state, ev) {
   if (e.income) state.finance.passiveIncome = (state.finance.passiveIncome || 0) + e.income
   if (e.mental) state.player.ratings.mental = clamp(state.player.ratings.mental + e.mental, 5, 99)
   pushNews(state, ev.text, 'life')
+}
+
+/**
+ * The ultimatum, answered.
+ *
+ * `stay` is the only decision in the game that trades career for anything
+ * other than money. It caps the schedule at fourteen starts for as long as the
+ * marriage lasts, which at the top of the game costs ranking points, majors
+ * and the two or three best years somebody will ever have — and that is the
+ * point. Choosing the tour is not free either: it ends the marriage on the
+ * spot, at the usual price.
+ */
+export function answerUltimatum(state, choice) {
+  const fam = state.family
+  if (!fam.ultimatum) return state
+  const who = fam.partner ? fam.partner.name : 'your partner'
+  fam.hadUltimatum = true
+  if (choice === 'retire') {
+    fam.ultimatum = null
+    fam.strain = 0
+    const line = `${who} asked you to choose. You went home.`
+    fam.history.push({ year: state.year, text: line })
+    if (state.offseason) state.offseason.ultimatum = null
+    retire(state, 'went home')
+    return state
+  }
+  if (choice === 'stay') {
+    fam.ultimatum = null
+    fam.strain = 0.25
+    fam.cappedSince = state.year
+    state.player.morale = clamp(state.player.morale + 10, 0, 100)
+    const line = `You promised ${who} a smaller year. No more than ${ULTIMATUM_STARTS} starts, and home for the rest.`
+    fam.history.push({ year: state.year, text: line })
+    pushNews(state, line, 'life')
+    addHighlight(state, 'milestone', {
+      title: 'You chose the family',
+      text: `${who} asked you to choose, and you chose them. A ${ULTIMATUM_STARTS}-start year from here, for as long as it holds.`,
+      importance: 4,
+    })
+    // A promise made in December is worth nothing if the schedule already
+    // says otherwise.
+    trimScheduleToCap(state)
+  } else {
+    applyDivorce(state, `${who} asked you to choose. You chose the tour.`)
+  }
+  if (state.offseason) state.offseason.ultimatum = null
+  return state
+}
+
+/** The promise, enforced on next season's schedule. */
+export function familyStartCap(state) {
+  const fam = state.family
+  if (!fam || !fam.cappedSince) return null
+  if (fam.status === 'divorced' || fam.status === 'separated') return null
+  return ULTIMATUM_STARTS
+}
+
+function trimScheduleToCap(state) {
+  const cap = familyStartCap(state)
+  if (!cap) return
+  const offseason = state.phase === 'offseason'
+  const target = offseason ? state.nextEntered : state.entered
+  const list = offseason ? state.nextSeason : state.season
+  const entered = Object.keys(target)
+    .filter((id) => target[id])
+    .map((id) => list.find((e) => e.id === id))
+    .filter(Boolean)
+    // Majors survive to the end; nobody keeps a promise by skipping the Open.
+    .sort((a, b) => (a.isMajor === b.isMajor ? (a.purse || 0) - (b.purse || 0) : a.isMajor ? 1 : -1))
+  let n = entered.length
+  for (const ev of entered) {
+    if (n <= cap) break
+    delete target[ev.id]
+    n -= 1
+  }
 }
 
 /** Commit the offseason and tee up the new year. */
@@ -2274,6 +2474,21 @@ export function simToAge(state, targetAge, opts = {}) {
   return simYears(state, state.year + years, opts)
 }
 
+/**
+ * How much pressure it takes before walking away is on the table at all, and
+ * what the player says on the way out.
+ */
+export const RETIRE_FLOOR = 48
+
+const RETIRE_REASON = {
+  Age: 'ran out of years',
+  Decline: 'were no longer the player you had been',
+  Money: 'could not afford another season',
+  Home: 'chose the people at home',
+  Burnout: 'had stopped enjoying it',
+  Health: 'could not get healthy',
+}
+
 /** Sensible defaults so "sim 10 years" does something reasonable. */
 export function autoOffseason(state, opts = {}) {
   const rng = Rng.from(state.rngState)
@@ -2304,6 +2519,33 @@ export function autoOffseason(state, opts = {}) {
   if (!funding.ok) {
     foldCareer(state)
     return
+  }
+
+  /**
+   * And sometimes you just stop.
+   *
+   * `retirementPressure` has existed the whole time, fully worked out, wired
+   * to a single UI panel and consulted by nothing. So the only two ways out of
+   * this game were running out of money and turning sixty-six, which is why
+   * every successful career ran to sixty-five: a five-time major winner at
+   * forty-eight, thirty points below their peak, with a marriage in pieces and
+   * more money than they could spend, had no way to walk away.
+   *
+   * Probabilistic rather than a threshold, so the same career does not always
+   * end in the same year, and gated on there being an actual reason: pressure
+   * below the floor never retires anybody.
+   */
+  if (!opts.neverRetire) {
+    const rp = retirementPressure(state)
+    if (rp.pressure > RETIRE_FLOOR) {
+      const odds = clamp((rp.pressure - RETIRE_FLOOR) / 55, 0, 0.85)
+      if (rng.chance(odds)) {
+        const top = rp.reasons.slice().sort((a, b) => b.weight - a.weight)[0]
+        retire(state, RETIRE_REASON[top ? top.label : 'Age'] || 'decided it was time')
+        state.rngState = rng.s
+        return
+      }
+    }
   }
 
   // No card and no exemption means Q-School, every year, until it works.
@@ -2359,7 +2601,7 @@ function plannedBurn(state) {
   return annualExpenses({
     lifestyleId: state.finance.lifestyle,
     staffCost: annualStaffCost(state.staff),
-    startsByCircuit: { [circuit]: defaultTargetStarts(p) },
+    startsByCircuit: { [circuit]: defaultTargetStarts(p, state) },
     yearsElapsed: state.yearsElapsed,
     dependents: state.finance.dependents,
     amateur: p.status === 'amateur',
@@ -2687,7 +2929,7 @@ export function autoFillSchedule(state, targetStarts) {
   const target = offseason ? {} : { ...state.entered }
   const fromWeek = offseason ? 1 : state.week
   const p = state.player
-  const desired = targetStarts || defaultTargetStarts(p)
+  const desired = Math.min(targetStarts || defaultTargetStarts(p, state), familyStartCap(state) || 99)
 
   // Evaluate against next season's projected status.
   const probe = offseason ? { ...state, year: state.year + 1 } : state
@@ -2778,11 +3020,14 @@ export function autoFillSchedule(state, targetStarts) {
   return state
 }
 
-function defaultTargetStarts(p) {
-  if (p.age >= 48) return 20
-  if (p.age >= 42) return 22
+function defaultTargetStarts(p, state) {
+  // A promise made to somebody at home is a hard limit on the year, and the
+  // auto-manager has to keep it or the choice was never a choice.
+  const cap = state ? familyStartCap(state) : null
+  if (p.age >= 48) return Math.min(cap || 99, 20)
+  if (p.age >= 42) return Math.min(cap || 99, 22)
   if (p.status === 'amateur') return 18
-  return 25
+  return Math.min(cap || 99, 25)
 }
 
 export function eventAttractiveness(ev, p, market = 0) {
@@ -2877,9 +3122,31 @@ export function retirementPressure(state) {
   const reasons = []
   let pressure = 0
 
-  if (p.age >= 40) {
-    pressure += (p.age - 39) * 5
-    reasons.push({ label: 'Age', detail: `${plural(p.age, 'year')} old`, weight: (p.age - 39) * 5 })
+  /**
+   * Age, recalibrated now that something reads this.
+   *
+   * The old ramp started at forty and added five a year, so it alone reached
+   * 45 points by forty-eight. That was harmless while this number only ever
+   * drew a bar on a screen; the moment it decided anything, every career in
+   * the game ended between forty-two and forty-nine and the Senior Circuit
+   * had no one to play in it. Golf is the sport you can do until you are
+   * sixty, which is the whole reason that tour exists.
+   */
+  if (p.age >= 44) {
+    const w = p.age < SENIOR_AGE ? (p.age - 43) * 2.5 : 15 + (p.age - 49) * 4
+    pressure += w
+    reasons.push({ label: 'Age', detail: `${plural(p.age, 'year')} old`, weight: w })
+  }
+  /**
+   * And the thing that keeps a forty-seven-year-old going: there is another
+   * tour two years away that they will be one of the youngest players on.
+   * The AI pool has always had this — a fifty-year-old who can still play
+   * changes tours rather than stopping — and the user was the only golfer in
+   * the world it did not apply to.
+   */
+  if (p.age >= 44 && p.age < SENIOR_AGE && overall(p.ratings) >= 48) {
+    pressure -= 14
+    reasons.push({ label: 'Senior Circuit', detail: `${plural(SENIOR_AGE - p.age, 'year')} until you are eligible`, weight: -14 })
   }
   if (ovrDrop > 6) {
     pressure += ovrDrop * 1.8
@@ -2910,14 +3177,29 @@ export function retirementPressure(state) {
     pressure += 12
     reasons.push({ label: 'Health', detail: p.injury.name, weight: 12 })
   }
+  // The people who did not choose this job. An ultimatum on the table
+  // outweighs everything else here, which is what an ultimatum is.
+  const fam = familyPressure(state.family)
+  if (fam) {
+    pressure += fam.weight
+    reasons.push({ label: fam.label, detail: fam.detail, weight: fam.weight })
+  }
+  /**
+   * What is still out there. These subtract, because an unfinished thing is a
+   * reason to keep going — but only while it is still plausible. Having never
+   * won anything is an argument for one more year at twenty-eight and an
+   * argument for stopping at forty-one, and a flat bonus said the opposite
+   * right up to the day the money ran out.
+   */
+  const hope = clamp((42 - p.age) / 12, 0, 1)
   const chasing = []
   if (state.career.majors === 0 && p.age < 48) {
     chasing.push('You have never won a major.')
-    pressure -= 12
+    pressure -= 12 * hope
   }
   if (state.career.wins === 0) {
     chasing.push('You have never won on tour.')
-    pressure -= 8
+    pressure -= 8 * hope
   }
   if (p.rank && p.rank <= 25) {
     chasing.push(`You are still ranked #${p.rank} in the world.`)

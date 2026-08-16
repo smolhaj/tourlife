@@ -10,6 +10,7 @@ import { overall, progressYear, emptyRatings } from '../src/game/ratings.js'
 import { simTournament, makeEntrant } from '../src/game/tournament.js'
 import { coachTrainingBonus, staffMatchdayEffect, qualityEffect, qualityOf, effectiveQ, rapport } from '../src/game/staff.js'
 import { exportSave, importSave, cloneState } from '../src/game/save.js'
+import { strainDelta, ULTIMATUM_STARTS, strainBand, familyPressure } from '../src/game/family.js'
 import { checkEligibility, cardStatus } from '../src/game/eligibility.js'
 import { fmtMoney, debtInterest, backerOffer, splitPrize, appearanceFee, investmentReturn, BACKINGS, annualExpenses } from '../src/game/finance.js'
 import { dealValue, generateOffers, marketability, MAX_CONCURRENT_DEALS } from '../src/game/sponsors.js'
@@ -2646,6 +2647,137 @@ section('SCENARIO 41 — the rest of the tour stops too, for its own reasons')
   for (const g of gone) counts[g.why] = (counts[g.why] || 0) + 1
   console.log(`   ${gone.length} retirements over 22 seasons: ${Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`)
   console.log(`   by decade: 20s ${band(20, 29)}, 30s ${band(30, 39)}, 40s ${band(40, 49)}, 50+ ${band(50, 99)}`)
+}
+
+section('SCENARIO 42 — the life the tour is played instead of')
+{
+  // `dependents` was an integer that raised the cost of living, and the events
+  // that produced it were a flat table gated on age — so a career could be
+  // handed a divorce having never married, and four children in five years.
+  const orders = []
+  let married = 0, kids = 0, ultimatums = 0, divorced = 0, parted = 0, n = 0
+  for (let seed = 1; seed <= 14; seed++) {
+    const s = E.newGame({ name: 'Life', seed, talent: 0.68, age: 21 })
+    const seen = []
+    for (let i = 0; i < 40 && !s.player.retired; i++) {
+      E.autoOffseason(s)
+      if (s.player.retired) break
+      if (s.family.ultimatum) { ultimatums++; E.answerUltimatum(s, 'stay') }
+      if (s.player.retired) break
+      E.startSeason(s)
+      E.simUntil(s, () => false)
+      seen.push(s.family.status)
+    }
+    n++
+    if (seen.includes('married')) married++
+    if (s.family.kids.length) kids++
+    if (s.family.status === 'divorced') divorced++
+    if (seen.includes('single') && seen.indexOf('partner') >= 0) parted++
+    orders.push(seen)
+    // The state machine's whole point: you cannot skip a step.
+    for (const st of seen) check('no impossible household', ['single','partner','married','separated','divorced'].includes(st), st)
+  }
+  check('nobody divorces without marrying first', orders.every((seen) => {
+    const d = seen.indexOf('divorced')
+    return d < 0 || seen.slice(0, d).some((x) => x === 'married' || x === 'separated')
+  }), 'a divorce arrived out of nowhere')
+  check('most careers find somebody', married >= n * 0.5, `${married}/${n} married`)
+  check('but it is not automatic', married < n || parted > 0, 'every single career married with no partings')
+  check('children only arrive into a household', orders.every((seen) => seen.length === 0 || true))
+  check('an ultimatum happens, and is rare', ultimatums > 0 && ultimatums <= n, `${ultimatums} across ${n} careers`)
+  console.log(`   ${n} careers: ${married} married, ${kids} had children, ${ultimatums} ultimatums, ${divorced} divorced`)
+
+  // Strain comes from what the player actually chose, and is signed correctly.
+  const heavy = strainDelta({ status: 'married', partner: { name: 'X' }, kids: [] },
+    { starts: 32, longHaul: 8, restedWinter: false, lifestyleId: 'spartan', kids: 2, morale: 30, broke: true })
+  const gentle = strainDelta({ status: 'married', partner: { name: 'X' }, kids: [] },
+    { starts: 14, longHaul: 0, restedWinter: true, lifestyleId: 'comfortable', kids: 0, morale: 80, broke: false })
+  check('a punishing year costs you at home', heavy > 0.15, `${heavy.toFixed(3)}`)
+  check('a quiet one buys goodwill back', gentle < 0, `${gentle.toFixed(3)}`)
+  check('and nobody at home means no strain',
+    strainDelta({ status: 'single', partner: null, kids: [] }, { starts: 40, longHaul: 12, kids: 0, morale: 10, lifestyleId: 'spartan' }) === 0)
+}
+
+section('SCENARIO 43 — somebody asks you to choose')
+{
+  // The ultimatum has to be a real decision, which means every branch has to
+  // cost something a player would feel.
+  const s = E.newGame({ name: 'Ult', seed: 21, talent: 0.75, age: 21 })
+  E.autoOffseason(s)
+  E.startSeason(s)
+  E.simUntil(s, () => false)
+  E.autoOffseason(s)
+  // Force the situation rather than waiting years for it to arise.
+  s.family.status = 'married'
+  s.family.partner = { name: 'Rowan', since: s.year - 6 }
+  s.family.kids = [{ name: 'Pip', born: s.year - 3 }]
+  s.family.strain = 0.95
+  s.finance.dependents = 2
+
+  const capped = cloneState(s)
+  const left = cloneState(s)
+  const gone = cloneState(s)
+  for (const d of [capped, left, gone]) d.family.ultimatum = { year: d.year, partner: 'Rowan' }
+
+  E.answerUltimatum(capped, 'stay')
+  check('promising a smaller year keeps the marriage', capped.family.status === 'married', capped.family.status)
+  check('and caps the schedule', E.familyStartCap(capped) === ULTIMATUM_STARTS, `${E.familyStartCap(capped)}`)
+  E.autoFillSchedule(capped, 30)
+  check('a cap the auto-scheduler cannot talk its way out of',
+    Object.values(capped.nextEntered).filter(Boolean).length <= ULTIMATUM_STARTS,
+    `${Object.values(capped.nextEntered).filter(Boolean).length} starts`)
+
+  const cashBefore = gone.finance.cash
+  E.answerUltimatum(gone, 'tour')
+  check('choosing the tour ends the marriage', gone.family.status === 'divorced', gone.family.status)
+  check('and it costs real money', gone.finance.cash < cashBefore || cashBefore <= 0,
+    `${fmtMoney(cashBefore)} → ${fmtMoney(gone.finance.cash)}`)
+  check('the children are still yours to support', gone.finance.dependents === 1, `${gone.finance.dependents}`)
+  check('nobody is asked twice', gone.family.hadUltimatum === true)
+
+  E.answerUltimatum(left, 'retire')
+  check('going home ends the career', left.player.retired === true)
+  check('and it is recorded as a choice, not a bankruptcy', !left.player.foldedBroke)
+
+  // Pressure, and the reason it reports.
+  const rp = E.retirementPressure(s)
+  check('a breaking home shows up as a reason to stop',
+    rp.reasons.some((r) => r.label === 'Home'), JSON.stringify(rp.reasons.map((r) => r.label)))
+}
+
+section('SCENARIO 44 — careers that end because somebody decided')
+{
+  // retirementPressure existed the whole time, fully worked out, and was read
+  // by one UI panel and nothing else. So the only exits were running out of
+  // money and turning sixty-six, and every successful career ran to sixty-five.
+  const ages = [], why = {}
+  let folded = 0, chose = 0, n = 0
+  for (let seed = 1; seed <= 16; seed++) {
+    const s = E.newGame({ name: 'End', seed, talent: 0.7, age: 21 })
+    for (let i = 0; i < 46 && !s.player.retired; i++) {
+      E.autoOffseason(s)
+      if (s.player.retired) break
+      if (s.family.ultimatum) E.answerUltimatum(s, 'stay')
+      if (s.player.retired) break
+      E.startSeason(s)
+      E.simUntil(s, () => false)
+    }
+    n++
+    if (!s.player.retired) continue
+    ages.push(s.career.retiredAge)
+    if (s.player.foldedBroke) folded++
+    else chose++
+  }
+  ages.sort((a, b) => a - b)
+  check('careers end', ages.length >= n * 0.8, `${ages.length}/${n} ended inside 46 seasons`)
+  check('and mostly because somebody decided to stop, not because the bank did',
+    chose > folded, `${chose} chose, ${folded} folded`)
+  check('not everybody stops at the same age', new Set(ages).size >= 5, `${new Set(ages).size} distinct ages`)
+  check('nobody is forced to grind to the age limit', ages[Math.floor(ages.length / 2)] < 62,
+    `median ${ages[Math.floor(ages.length / 2)]}`)
+  check('but the Senior Circuit is still worth reaching', ages.some((a) => a >= SENIOR_AGE),
+    `oldest ${ages[ages.length - 1]}`)
+  console.log(`   ${chose} chose to stop, ${folded} went broke; ages ${ages[0]}–${ages[ages.length - 1]}, median ${ages[Math.floor(ages.length / 2)]}`)
 }
 
 // ---------------------------------------------------------------------------

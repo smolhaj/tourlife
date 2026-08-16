@@ -308,6 +308,14 @@ export default function App() {
             : null
         }),
       declineBacker: () => run('decline backer', (d) => E.declineBacker(d), { snapshot: false }),
+      answerUltimatum: (choice) =>
+        run('answer the ultimatum', (d) => {
+          const who = d.family.partner ? d.family.partner.name : 'your partner'
+          E.answerUltimatum(d, choice)
+          if (choice === 'retire') return { toast: `You went home.`, toastKind: 'bad' }
+          if (choice === 'stay') return { toast: `You promised ${who} a smaller year.`, toastKind: 'good' }
+          return { toast: `You chose the tour. ${who} is gone.`, toastKind: 'bad' }
+        }),
       undo: () => {
         const entry = historyRef.current.undo(state)
         if (!entry) return toast('Nothing to undo.', 'bad')

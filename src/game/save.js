@@ -153,6 +153,7 @@ const REQUIRED_SHAPE = {
     seasonsTop10: 0,
     asianOrderOfMeritWins: 0,
   },
+  family: { status: 'single', partner: null, kids: [], strain: 0, ultimatum: null, history: [] },
   finance: { cash: 0, lifestyle: 'modest', backing: 'club', backer: null, workedThrough: 0, dependents: 0, passiveIncome: 0, seasonAppearance: 0, appearancesTaken: 0, history: [] },
   sponsors: { deals: [], offers: [] },
   staff: { coach: null, caddie: null, physio: null, psych: null, agent: null },
