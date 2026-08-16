@@ -15,6 +15,7 @@ import { ratingTextColor } from '../game/ratings.js'
 import { marketability } from '../game/sponsors.js'
 import { plural } from '../game/narrative.js'
 import { canFundSeason, winterWorkPay } from '../game/engine.js'
+import { ULTIMATUM_STARTS, strainLine, strainBand, hasPartner, familyLabel } from '../game/family.js'
 import { Card, Option, Chip, Money, Empty, StatGrid, Stat, CircuitChip } from './ui.jsx'
 import ScheduleBuilder from './ScheduleBuilder.jsx'
 
@@ -153,6 +154,40 @@ function Review({ state, last, os, actions }) {
             <div className="xs muted" style={{ marginTop: 8, lineHeight: 1.5 }}>
               Cheaper living, fewer staff and a shorter schedule all help. Winter work in the training tab pays the
               bills at the cost of a winter's practice.
+            </div>
+          </Card>
+        ) : null}
+
+        {state.family?.ultimatum ? (
+          <Card title={`${state.family.ultimatum.partner} has asked you to choose`}>
+            <div style={{ fontSize: 15, lineHeight: 1.55 }}>
+              It has been coming for years and you both know it. Thirty weeks a year in another time zone,
+              {state.family.kids.length
+                ? ` ${state.family.kids.length === 1 ? 'a child' : `${state.family.kids.length} children`} who see you between tournaments,`
+                : ''}{' '}
+              and a marriage held together by phone calls from hotel rooms.{' '}
+              <b>{state.family.ultimatum.partner} is not asking you to be better at it. They are asking you to stop.</b>
+            </div>
+            <div className="hr" />
+            <div className="col gap-sm">
+              <Option
+                onClick={() => actions.answerUltimatum('retire')}
+                title="Go home"
+                desc="End the career here. Whatever you have won is what you won."
+                right="retire"
+              />
+              <Option
+                onClick={() => actions.answerUltimatum('stay')}
+                title={`Promise a smaller year — ${ULTIMATUM_STARTS} starts, no more`}
+                desc="Keep playing and keep the marriage, on a schedule that will cost you ranking points, majors, and probably the best years you had left."
+                right={`max ${ULTIMATUM_STARTS}`}
+              />
+              <Option
+                onClick={() => actions.answerUltimatum('tour')}
+                title="Choose the tour"
+                desc={`The marriage ends. Half of everything, and ${state.family.kids.length ? 'the children go with them' : 'the house goes with them'}.`}
+                right="divorce"
+              />
             </div>
           </Card>
         ) : null}

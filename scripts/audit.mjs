@@ -238,7 +238,11 @@ start('forty-five years')
   const s = E.newGame({ name: 'D', seed: 777, talent: 0.55, age: 21 })
   const snap = []
   for (let yr = 0; yr < 45 && !s.player.retired; yr++) {
-    E.autoOffseason(s)
+    // This pass is about the world drifting over a long horizon, not about one
+    // career. Once players started choosing to retire it ended at twenty-six
+    // seasons and quietly stopped checking the thing it exists to check —
+    // including the senior-pool floor, which is the slowest leak of the lot.
+    E.autoOffseason(s, { neverRetire: true })
     if (s.player.retired) break
     E.startSeason(s)
     E.simToOffseason(s)
