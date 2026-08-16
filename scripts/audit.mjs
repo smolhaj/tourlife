@@ -19,15 +19,19 @@
 // same seed still replays identically.
 
 import * as E from '../src/game/engine.js'
-import { ATTR_KEYS, SENIOR_AGE, STAFF_ROLES, EQUIP_SLOTS, TRAINING_OPTIONS } from '../src/game/constants.js'
+import { ATTR_KEYS, SENIOR_AGE, STAFF_ROLES, EQUIP_SLOTS, TRAINING_OPTIONS, PLAYSTYLES, LIFESTYLES } from '../src/game/constants.js'
 import { overall } from '../src/game/ratings.js'
-import { effectiveQ, annualStaffCost } from '../src/game/staff.js'
+import { effectiveQ, annualStaffCost, rapportLabel, describeStaff, qualityEffect } from '../src/game/staff.js'
 import { equipmentBonus, bagTech, techBaseline } from '../src/game/equipment.js'
 import { ailmentPenalty } from '../src/game/injuries.js'
 import { sponsorIncome } from '../src/game/sponsors.js'
+import { fmtMoney } from '../src/game/finance.js'
+import { conditionsLabel } from '../src/game/weather.js'
+import { familiarityLabel } from '../src/game/venue.js'
+import { eraLabel } from '../src/game/era.js'
 import { scoringAverage } from '../src/game/stats.js'
 import { racePosition, raceStandings, FINALE_ID, FINALE_WEEK } from '../src/game/race.js'
-import { CUP_WEEK } from '../src/game/teamcup.js'
+import { CUP_WEEK, recordText } from '../src/game/teamcup.js'
 import { cardStatus } from '../src/game/eligibility.js'
 import { exportSave, importSave, cloneState, History } from '../src/game/save.js'
 
@@ -384,6 +388,130 @@ start('career transitions')
         flag('collision', `played ${s.career.starts - before} events in week ${wk}`)
       }
     }
+  }
+}
+done()
+
+// ------------------------------------------------------- player commands
+start('player commands')
+{
+  const freshAt = (phase) => {
+    const s = E.newGame({ name: 'UI', seed: 808, talent: 0.66, age: 21 })
+    play(s, 6)
+    if (phase === 'season') {
+      E.autoOffseason(s)
+      E.startSeason(s)
+      for (let w = 0; w < 10; w++) E.simWeek(s)
+    } else {
+      E.autoOffseason(s)
+    }
+    return s
+  }
+  // Every command the UI can fire, repeated, and pointed at things that do not
+  // exist. The fuzzer drives godmode; these are the buttons a player presses.
+  const cmds = [
+    ['setTraining', (s) => { for (const t of TRAINING_OPTIONS) E.setTraining(s, t.id); E.setTraining(s, 'nonsense') }],
+    ['setPlaystyle', (s) => { for (const p of PLAYSTYLES) E.setPlaystyle(s, p.id); E.setPlaystyle(s, 'nope') }],
+    ['setLifestyle', (s) => { for (const l of LIFESTYLES) E.setLifestyle(s, l.id); E.setLifestyle(s, 'nope') }],
+    ['hire and fire', (s) => {
+      for (let i = 0; i < 3; i++) {
+        for (const r of STAFF_ROLES) {
+          const cand = (s.staffMarket?.[r.id] || [])[0]
+          if (cand) E.hireStaff(s, r.id, cand.id)
+          E.fireStaff(s, r.id)
+          E.fireStaff(s, r.id)
+          E.hireStaff(s, r.id, 'does-not-exist')
+        }
+      }
+    }],
+    ['buy equipment', (s) => {
+      for (const slot of EQUIP_SLOTS) {
+        for (const item of s.equipCatalog?.[slot.id] || []) E.buyEquipment(s, slot.id, item.id)
+        E.buyEquipment(s, slot.id, 'no-such-item')
+      }
+      E.buyEquipment(s, 'no-such-slot', 'x')
+    }],
+    ['sponsors', (s) => {
+      for (const o of [...(s.sponsors.offers || [])]) { E.negotiateOffer(s, o.id); E.acceptOffer(s, o.id) }
+      for (const o of [...(s.sponsors.offers || [])]) E.declineOffer(s, o.id)
+      E.acceptOffer(s, 'nope'); E.declineOffer(s, 'nope'); E.negotiateOffer(s, 'nope')
+    }],
+    ['schedule churn', (s) => {
+      const list = s.phase === 'offseason' ? s.nextSeason : s.season
+      for (const ev of list.slice(0, 40)) { E.toggleEntry(s, ev.id); E.toggleEntry(s, ev.id); E.toggleEntry(s, ev.id) }
+      E.toggleEntry(s, 'nope'); E.clearSchedule(s); E.autoFillSchedule(s, 0); E.autoFillSchedule(s, 999)
+    }],
+    ['prepare', (s) => {
+      for (const ev of (s.season || []).slice(0, 20)) { E.prepareFor(s, ev.id); E.prepareFor(s, ev.id) }
+      E.prepareFor(s, 'nope')
+    }],
+    ['backer', (s) => { E.acceptBacker(s); E.acceptBacker(s); E.declineBacker(s); E.declineBacker(s) }],
+    ['trim and q-school', (s) => { E.trimScheduleToBudget(s); E.trimScheduleToBudget(s); E.enterQSchool(s); E.enterQSchool(s) }],
+    ['retire cycle', (s) => { E.retire(s); E.retire(s); E.unretire(s); E.unretire(s) }],
+  ]
+  for (const phase of ['offseason', 'season']) {
+    for (const [name, run] of cmds) {
+      const s = freshAt(phase)
+      try {
+        run(s)
+        E.refreshDerived(s)
+        let bad = findBad(s)
+        if (bad.length) flag(`${phase}/${name}`, `non-finite: ${bad.join(', ')}`)
+        if (!s.player.retired) {
+          if (s.phase === 'offseason') E.startSeason(s)
+          E.simToOffseason(s)
+          bad = findBad(s)
+          if (bad.length) flag(`${phase}/${name}`, `non-finite after a season: ${bad.join(', ')}`)
+        }
+      } catch (err) {
+        flag(`${phase}/${name}`, `threw: ${err.message}`)
+      }
+    }
+  }
+}
+done()
+
+// -------------------------------------------------------------------- text
+start('text the player reads')
+{
+  const malformed = (t) => typeof t !== 'string' || !t.length || /undefined|NaN|\[object|Infinity|\$-/.test(t)
+  for (let n = 0; n < 40; n++) if (malformed(familiarityLabel(n, n % 4))) flag('familiarityLabel', `${n} visits`)
+  for (let y = 0; y < 20; y++) if (malformed(rapportLabel({ yearsWithYou: y }))) flag('rapportLabel', `${y} years`)
+  for (let y = 0; y < 45; y++) if (malformed(eraLabel(y))) flag('eraLabel', `year ${y}`)
+  for (let w = 0; w <= 100; w += 5) {
+    for (let r = 0; r <= 100; r += 20) {
+      if (malformed(conditionsLabel({ wind: w / 100, rain: r / 100 }))) flag('conditionsLabel', `wind ${w} rain ${r}`)
+    }
+  }
+  for (const v of [0, 1, -1, 999, 1e6, -1e6, 1e9, -1e9, 1e12]) {
+    for (const o of [{}, { compact: true }, { sign: true }, { compact: true, sign: true }]) {
+      const t = fmtMoney(v, o)
+      if (typeof t !== 'string' || !t.length || /undefined|NaN/.test(t)) flag('fmtMoney', `${v} ${JSON.stringify(o)}`)
+    }
+  }
+  for (const r of [null, { w: 0, l: 0, h: 0 }, { w: 12, l: 3, h: 2 }]) if (malformed(recordText(r))) flag('recordText', JSON.stringify(r))
+  for (const role of ['coach', 'caddie', 'physio', 'psych', 'agent']) {
+    for (const q of [0, 0.5, 1]) if (malformed(qualityEffect(role, q))) flag('qualityEffect', `${role} at ${q}`)
+  }
+  if (malformed(describeStaff(null))) flag('describeStaff', 'the vacancy case')
+
+  // And every string a long career actually emits.
+  const s = E.newGame({ name: 'Text', seed: 313, talent: 0.75, age: 21 })
+  play(s, 22)
+  for (const l of s.log) for (const f of ['text', 'detail']) if (l[f] != null && malformed(l[f])) flag('log', `${f}: ${l[f]}`)
+  for (const n of s.news) if (malformed(n.text)) flag('news', n.text)
+  for (const h of s.career.highlights) {
+    if (malformed(h.title)) flag('highlight', `title ${h.title}`)
+    if (malformed(h.text)) flag('highlight', `text ${h.text}`)
+  }
+  for (const r of s.career.allResults) if (malformed(r.name)) flag('result', r.name)
+  for (const p of s.world.players.slice(0, 400)) {
+    if (malformed(p.name)) flag('player name', p.name)
+    if (p.nickname && malformed(p.nickname)) flag('nickname', p.nickname)
+  }
+  for (const e of s.season) {
+    if (malformed(e.name)) flag('event name', e.name)
+    if (malformed(e.venue)) flag('venue', e.venue)
   }
 }
 done()
