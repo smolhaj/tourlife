@@ -254,7 +254,7 @@ export function driftForm(players, rng) {
       p.injury.weeksLeft -= 1
       if (p.injury.weeksLeft <= 0) {
         // Not every comeback is complete. This is what puts a former world
-        // number one in the middle of the field at thirty-four and leaves him
+        // number one in the middle of the field at thirty-four and leaves them
         // there — the thing a ratings curve alone can never produce.
         const lasting = residualDamage(p.injury, rng, supportLevel(p))
         for (const [k, v] of Object.entries(lasting)) {
@@ -304,33 +304,106 @@ export function progressWorld(world, rng, year) {
     // money list makes the decision for them — which is what fills the
     // Senior Circuit thirty years into a career.
     let retireChance = 0
-    if (p.age >= 40) retireChance += (p.age - 39) * 0.006
-    if (ovr < 34) retireChance += 0.25
-    if (p.age >= 44 && ovr < 44) retireChance += 0.05
+    let reason = null
+    const bid = (chance, why) => {
+      if (chance <= 0) return
+      // Whichever reason carries the most weight is the one they give.
+      if (chance > (reason ? reason.chance : 0)) reason = { chance, why }
+      retireChance += chance
+    }
+    bid(p.age >= 40 ? (p.age - 39) * 0.006 : 0, 'age')
+    bid(ovr < 34 ? 0.25 : 0, 'not good enough')
+    bid(p.age >= 44 && ovr < 44 ? 0.05 : 0, 'not good enough')
+
+    /**
+     * The reasons golfers actually stop, beyond being old and being bad.
+     *
+     * Those two were the whole model, and between them they left a hole in the
+     * curve exactly where real careers end most often: a player over 34 rated
+     * and under 40 years old had essentially no way out at all, so thirty-five
+     * to thirty-nine took 21 retirements against 118 in the band below it and
+     * 114 in the band above. Nobody in this world ever lost a step at
+     * thirty-six and went and did something else.
+     */
+
+    // Falling away from what you were. Not being bad in absolute terms — being
+    // visibly worse than the player you used to be, which is what tells you it
+    // is over, and which is why it can end a career at any age.
+    const drop = Math.max(0, p.peakOvr - ovr)
+    if (drop > 4 && p.age >= 29) {
+      bid(Math.min(0.14, (drop - 4) * 0.011 * (1 + Math.max(0, p.age - 32) * 0.03)), 'not the player you were')
+    }
+
+    /**
+     * The body. A career of setbacks ends careers, and it ends them young as
+     * often as it ends them late — a wrist that never came back at thirty-one
+     * is as final as anything on the age curve.
+     *
+     * Counted against the length of the career rather than as a raw total.
+     * Every player accumulates ailments if they play long enough, so a flat
+     * threshold made this the single largest cause of retirement in the game
+     * at 35% of all of them, and emptied the senior tour by killing everyone
+     * before they got to fifty. What ends a career is breaking down *often*.
+     */
+    const ailments = p.ailments ? Object.values(p.ailments).reduce((a, b) => a + b, 0) : 0
+    const proYears = Math.max(1, p.age - 21)
+    if (ailments >= 4 && ailments / proYears > 0.35) {
+      bid(Math.min(0.12, (ailments - 3) * 0.02), 'the body')
+    }
+    if (p.injury && p.injury.weeksTotal >= 16) bid(0.06, 'the body')
+
+    // Everything the model does not name: a business, a family, a job offer,
+    // or simply not wanting to do it any more. A small hazard on every player
+    // old enough to have a life outside it puts a trickle at every age.
+    if (p.age >= 28) bid(0.006, 'walked away')
+
+    // And the rare one worth having: a decorated player who stops while they
+    // are still good, rather than being pushed.
+    if (p.majors >= 2 && p.age >= 33 && drop > 2 && ovr >= 58) bid(0.05, 'went out on top')
     // The old curve emptied the senior tour: almost nobody survived past 62,
     // so a circuit that advertises 78-player fields was running on a pool of
     // about thirty — and once injuries started taking a share of those, fields
     // fell to nineteen. Real senior tours are full because a fifty-five-year-old
     // who can still play has every reason to keep playing.
-    if (p.age >= 58) retireChance += (p.age - 57) * 0.028
-    if (p.age >= 66) retireChance += 0.2
-    if (p.age >= 72) retireChance = 1
-    // Turning fifty is a change of tour, not a retirement. Anybody who can
-    // still play goes and plays the Senior Circuit, which is the only reason
-    // that circuit has a field at all — it has no pool of its own, it is
-    // entirely the tail of everyone else's career.
+    bid(p.age >= 58 ? (p.age - 57) * 0.028 : 0, 'age')
+    bid(p.age >= 66 ? 0.2 : 0, 'age')
+    if (p.age >= 72) {
+      retireChance = 1
+      reason = { chance: 1, why: 'age' }
+    }
+    /**
+     * Turning fifty is a change of tour, not a retirement. Anybody who can
+     * still play goes and plays the Senior Circuit, which is the only reason
+     * that circuit has a field at all — it has no pool of its own, it is
+     * entirely the tail of everyone else's career.
+     *
+     * Which means the four years before fifty are load-bearing, and only the
+     * far side of the line was protected. Adding real reasons to quit in the
+     * forties culled the cohort that becomes the senior tour: the population
+     * over fifty fell from 67 to 19 across forty-five seasons and the audit
+     * caught it. Somebody who is forty-six and can still play is two years
+     * from a payday, and quits at nothing like the rate of somebody the same
+     * distance past their peak at thirty-six.
+     */
+    if (p.age >= 46 && p.age < SENIOR_AGE && ovr >= 42) retireChance = Math.min(retireChance, 0.1)
     if (p.age >= SENIOR_AGE && p.age < 66 && ovr >= 40) retireChance = Math.min(retireChance, 0.06)
     // Mini-tour players give up much sooner than tour pros.
     if (p.homeCircuit === 'amateur') {
-      retireChance += 0.1 + Math.max(0, p.age - 27) * 0.06
+      const give = 0.1 + Math.max(0, p.age - 27) * 0.06
+      if (give > (reason ? reason.chance : 0)) reason = { chance: give, why: 'never made it' }
+      retireChance += give
       if (ovr > 55) retireChance = 0.02
     }
-    if (rng.chance(clamp(retireChance, 0, 1))) retiring.push(p)
+    if (rng.chance(clamp(retireChance, 0, 1))) {
+      p.retiredReason = reason ? reason.why : 'age'
+      retiring.push(p)
+    }
   }
 
   for (const p of retiring) {
     p.retired = true
     p.retiredYear = year
+    p.retiredAge = p.age
     p.rank = null
   }
 
@@ -362,6 +435,8 @@ export function progressWorld(world, rng, year) {
       if (p.age < 26 && rng.chance(0.55)) continue // young players get more rope
       p.retired = true
       p.retiredYear = year
+      p.retiredAge = p.age
+      p.retiredReason = 'squeezed out'
       p.rank = null
       retiring.push(p)
     }
@@ -369,17 +444,40 @@ export function progressWorld(world, rng, year) {
 
   // Restock each circuit with rookies.
   const taken = new Set(world.players.map((p) => p.name))
+  /**
+   * Restock each circuit — with players who could plausibly be on it.
+   *
+   * This table had no entry for the Senior Circuit, so every senior it topped
+   * the pool up with was built from `talent: undefined`: a nineteen-year-old
+   * whose seven ratings all came out `null` and whose overall was zero. The
+   * pool therefore always *reported* its target of 95 while the number of
+   * players actually old enough to enter a senior event collapsed underneath
+   * it, which is how a tour that advertises 78-player fields ran one with
+   * eight people in it. Seniors are restocked at senior ages, from the same
+   * distribution the world is seeded with.
+   */
+  const RESTOCK = {
+    domestic: { talent: 0.58, age: [19, 23] },
+    intl: { talent: 0.52, age: [19, 23] },
+    asian: { talent: 0.42, age: [19, 23] },
+    emerging: { talent: 0.33, age: [19, 23] },
+    amateur: { talent: 0.2, age: [19, 23] },
+    senior: { talent: 0.44, age: [SENIOR_AGE, 58] },
+  }
   for (const [circuit, target] of Object.entries(POOL_TARGET)) {
     const have = world.players.filter((p) => !p.retired && p.homeCircuit === circuit).length
-    const talentBase = { domestic: 0.58, intl: 0.52, asian: 0.42, emerging: 0.33, amateur: 0.2 }[circuit]
+    const spec = RESTOCK[circuit] || RESTOCK.emerging
     for (let i = have; i < target; i++) {
       const p = makeAiPlayer(rng, {
-        age: rng.int(19, 23),
-        talent: clamp(rng.gauss(talentBase, 0.16), 0.03, 0.99),
+        age: rng.int(spec.age[0], spec.age[1]),
+        talent: clamp(rng.gauss(spec.talent, 0.16), 0.03, 0.99),
         homeCircuit: circuit,
         taken,
         year,
       })
+      // A fifty-four-year-old did not turn up from nowhere; give them the
+      // career they must have had, or the all-time lists fill with blanks.
+      if (circuit === 'senior') seedHistory(p, rng)
       world.players.push(p)
     }
   }

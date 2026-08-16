@@ -7,6 +7,18 @@ import { STAT_DEFS, formatStat, statLine } from '../game/stats.js'
 import { regionById } from '../game/names.js'
 import { Modal, Chip, Stat, StatGrid, Empty, RatingRow } from './ui.jsx'
 
+/** Why they stopped, in the words somebody would actually use about them. */
+const RETIRED_BECAUSE = {
+  age: 'Went on as long as anyone could',
+  'not good enough': 'Never quite good enough',
+  'not the player you were': 'No longer the player they had been',
+  'the body': 'The body gave out',
+  'never made it': 'Never made it off the mini-tours',
+  'walked away': 'Walked away with plenty left',
+  'went out on top': 'Went out on top',
+  'squeezed out': 'Squeezed off the tour',
+}
+
 /**
  * Somebody else's career.
  *
@@ -49,13 +61,17 @@ export default function PlayerModal({ state, pid, onClose }) {
           <Chip>{region ? region.name : p.region.toUpperCase()}</Chip>
           <Chip>Age {p.age}</Chip>
           {p.retired ? (
-            <Chip tone="red">Retired {p.retiredYear}</Chip>
+            <Chip tone="red">
+              Retired {p.retiredYear}
+              {p.retiredAge ? ` at ${p.retiredAge}` : ''}
+            </Chip>
           ) : (
             <Chip tone={p.rank && p.rank <= 50 ? 'green' : undefined}>
               {p.rank ? `World #${p.rank}` : 'Unranked'}
             </Chip>
           )}
           {seniorNow && !p.retired ? <Chip tone="purple">Senior Circuit</Chip> : null}
+          {p.retired && p.retiredReason ? <Chip>{RETIRED_BECAUSE[p.retiredReason] || p.retiredReason}</Chip> : null}
           {p.nickname ? <Chip tone="purple">“{p.nickname}”</Chip> : null}
           {p.injury ? <Chip tone="red">{p.injury.name}</Chip> : null}
           {!p.retired && !p.injury && p.form >= 1.2 ? <Chip tone="green">In form</Chip> : null}
