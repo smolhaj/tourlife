@@ -174,6 +174,7 @@ const REQUIRED_TOP = {
   cupRota: [],
   cupHolders: {},
   cupHistory: [],
+  courseRecords: {},
   majorExemptUntil: 0,
   tourWinExemptUntil: 0,
   asianOMExemptUntil: 0,

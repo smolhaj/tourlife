@@ -1,6 +1,6 @@
 import React from 'react'
 import { CIRCUITS, COURSE_TYPES, ATTRS } from '../game/constants.js'
-import { checkEligibility, nextEnteredEvent, seasonSummary, currentBurn, canPrepareFor, prepCost } from '../game/engine.js'
+import { checkEligibility, nextEnteredEvent, seasonSummary, currentBurn, canPrepareFor, prepCost, courseRecordFor } from '../game/engine.js'
 import { careerPhase, majorNarrative, plural } from '../game/narrative.js'
 import { overallLabel, courseFit } from '../game/ratings.js'
 import { fmtMoney, coastStatus } from '../game/finance.js'
@@ -387,6 +387,12 @@ function NextEvent({ state, event, onPrepare }) {
         <Chip tone={fits.tone}>{fits.label}</Chip>
         <Chip>Setup: {event.difficulty >= 1.2 ? 'Brutal' : event.difficulty >= 1.05 ? 'Firm' : event.difficulty >= 0.95 ? 'Fair' : 'Gettable'}</Chip>
         <Chip>Field {event.fieldSize}</Chip>
+        {courseRecordFor(state, event.venue) ? (
+          <Chip tone={courseRecordFor(state, event.venue).isUser ? 'gold' : undefined}>
+            Record {courseRecordFor(state, event.venue).toPar > 0 ? '+' : ''}
+            {courseRecordFor(state, event.venue).toPar} · {courseRecordFor(state, event.venue).name}
+          </Chip>
+        ) : null}
         <Chip tone={venueEdgeFor(state.career, event.venue) > 0.4 ? 'green' : venueStartsOf(state.career, event.venue) === 0 ? 'red' : undefined}>
           {familiarityLabel(venueStartsOf(state.career, event.venue), venueWinsOf(state.career, event.venue))}
         </Chip>

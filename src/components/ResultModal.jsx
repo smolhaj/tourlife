@@ -3,11 +3,13 @@ import { COURSE_TYPES } from '../game/constants.js'
 import { fmtMoney, splitPrize } from '../game/finance.js'
 import { agentCut } from '../game/staff.js'
 import { conditionsLabel } from '../game/weather.js'
+import { courseRecordFor } from '../game/engine.js'
 import { familiarityLabel, venueStartsOf, venueWinsOf } from '../game/venue.js'
+import { formatToPar } from '../game/tournament.js'
 import { Modal, Chip, CircuitChip, ToPar, Money, Empty, posLabel } from './ui.jsx'
 
 /** Leaderboard for one tournament the player entered. */
-export default function ResultModal({ state, eventId, onClose }) {
+export default function ResultModal({ state, eventId, onClose, onOpenPlayer }) {
   const row = [...state.seasonLog].reverse().find((r) => r.eventId === eventId)
   const summary = state.seasonResults[eventId]
   const event = state.season.find((e) => e.id === eventId)
@@ -52,6 +54,12 @@ export default function ResultModal({ state, eventId, onClose }) {
           ) : null}
           {event ? <Chip>{COURSE_TYPES[event.courseType].name}</Chip> : null}
           {summary.conditions ? <Chip>{conditionsLabel(summary.conditions)}</Chip> : null}
+          {event && courseRecordFor(state, event.venue) ? (
+            <Chip tone={courseRecordFor(state, event.venue).isUser ? 'gold' : undefined}>
+              Course record {formatToPar(courseRecordFor(state, event.venue).toPar)} ·{' '}
+              {courseRecordFor(state, event.venue).name}
+            </Chip>
+          ) : null}
           {summary.cutLine !== null && summary.cutLine !== undefined ? (
             <Chip>Cut at {summary.cutLine > 0 ? `+${summary.cutLine}` : summary.cutLine}</Chip>
           ) : null}
@@ -91,7 +99,11 @@ export default function ResultModal({ state, eventId, onClose }) {
         </thead>
         <tbody>
           {board.map((r, i) => (
-            <tr key={`${r.pid}-${i}`} className={r.isUser ? 'me' : ''}>
+            <tr
+              key={`${r.pid}-${i}`}
+              className={`${r.isUser ? 'me' : ''} ${r.isUser ? '' : 'pointer'}`}
+              onClick={() => !r.isUser && onOpenPlayer && onOpenPlayer(r.pid)}
+            >
               <td className={`num lb-pos ${r.pos === 1 ? 'gold' : ''}`}>{posLabel(r)}</td>
               <td>
                 {r.flag} {r.name}

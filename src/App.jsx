@@ -20,6 +20,7 @@ import {
 
 import NewCareer from './components/NewCareer.jsx'
 import Dashboard from './components/Dashboard.jsx'
+import PlayerModal from './components/PlayerModal.jsx'
 import PlayerView from './components/PlayerView.jsx'
 import CareerView from './components/CareerView.jsx'
 import MoneyView from './components/MoneyView.jsx'
@@ -46,6 +47,7 @@ export default function App() {
   const [busy, setBusy] = useState(null)
   const [toasts, setToasts] = useState([])
   const [resultId, setResultId] = useState(null)
+  const [playerId, setPlayerId] = useState(null)
   const [showGod, setShowGod] = useState(false)
   const [showRetire, setShowRetire] = useState(false)
   const [showShare, setShowShare] = useState(false)
@@ -390,7 +392,7 @@ export default function App() {
           {tab === 'player' ? <PlayerView state={state} /> : null}
           {tab === 'career' ? <CareerView state={state} /> : null}
           {tab === 'money' ? <MoneyView state={state} onSetLifestyle={actions.setLifestyle} /> : null}
-          {tab === 'world' ? <WorldView state={state} /> : null}
+          {tab === 'world' ? <WorldView state={state} onOpenPlayer={setPlayerId} /> : null}
         </div>
       </>
     )
@@ -552,7 +554,10 @@ export default function App() {
         ))}
       </div>
 
-      {resultId ? <ResultModal state={state} eventId={resultId} onClose={() => setResultId(null)} /> : null}
+      {resultId ? (
+        <ResultModal state={state} eventId={resultId} onClose={() => setResultId(null)} onOpenPlayer={setPlayerId} />
+      ) : null}
+      {playerId ? <PlayerModal state={state} pid={playerId} onClose={() => setPlayerId(null)} /> : null}
       {showGod ? (
         <Godmode state={state} actions={actions} history={historyRef.current} onClose={() => setShowGod(false)} />
       ) : null}

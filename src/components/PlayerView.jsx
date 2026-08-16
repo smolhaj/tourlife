@@ -6,6 +6,7 @@ import { careerPhase, majorNarrative, legacyScore, legacyLabel } from '../game/n
 import { equipmentBonus, bagTech, techBaseline, startsToSettle } from '../game/equipment.js'
 import { describeStaff, rapportLabel } from '../game/staff.js'
 import { eraLabel } from '../game/era.js'
+import { STAT_DEFS, formatStat, scoringAverage, statRanks, tourStatAverages } from '../game/stats.js'
 import { STAFF_ROLES, EQUIP_SLOTS } from '../game/constants.js'
 import { fmtMoney } from '../game/finance.js'
 import { Card, RatingRow, Chip, Stat, StatGrid, Empty, Sparkline } from './ui.jsx'
@@ -55,6 +56,8 @@ export default function PlayerView({ state }) {
             </div>
           ) : null}
         </Card>
+
+        <Statistics state={state} />
 
         <Card title="Where you are in the arc">
           <div className="grid grid-2">
@@ -208,5 +211,67 @@ export default function PlayerView({ state }) {
         </Card>
       </div>
     </div>
+  )
+}
+
+/**
+ * The numbers a tour publishes about you. Scoring average is measured from
+ * every round you have actually played; the rest are your attributes in the
+ * units the sport quotes them in.
+ */
+function Statistics({ state }) {
+  const ranks = statRanks(state.effRatings, state.world.players, state.yearsElapsed)
+  const avgs = tourStatAverages(state.world.players, state.yearsElapsed)
+  const season = scoringAverage(state.seasonTotals)
+  const history = state.career.seasons.filter((s) => s.scoringAvg)
+  const best = history.length ? Math.min(...history.map((s) => s.scoringAvg)) : null
+  const career = history.length
+    ? Math.round(
+        (history.reduce((a, s) => a + s.scoringAvg * (s.rounds || 0), 0) /
+          Math.max(1, history.reduce((a, s) => a + (s.rounds || 0), 0))) * 100,
+      ) / 100
+    : null
+
+  return (
+    <Card title="Statistics" aux={`${state.seasonTotals.rounds || 0} rounds this season`}>
+      <StatGrid>
+        <Stat k="Scoring average" v={season ? season.toFixed(2) : '—'} s="this season, measured" />
+        <Stat k="Career" v={career ? career.toFixed(2) : '—'} s={`${history.length} seasons`} />
+        <Stat k="Best season" v={best ? best.toFixed(2) : '—'} tone={best && best < 70 ? 'gold' : ''} />
+        <Stat k="Rounds played" v={state.career.seasons.reduce((a, s) => a + (s.rounds || 0), 0) + (state.seasonTotals.rounds || 0)} s="career" />
+      </StatGrid>
+      <div className="hr" />
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Statistic</th>
+              <th className="num">You</th>
+              <th className="num">Tour</th>
+              <th className="num">Rank</th>
+            </tr>
+          </thead>
+          <tbody>
+            {STAT_DEFS.filter((d) => d.fn).map((d) => {
+              const r = ranks[d.key]
+              const top = r.rank <= Math.max(5, r.of * 0.02)
+              return (
+                <tr key={d.key}>
+                  <td>{d.name}</td>
+                  <td className={`num mono ${top ? 'gold b' : ''}`}>{formatStat(d, r.value)}</td>
+                  <td className="num muted-2">{formatStat(d, avgs[d.key])}</td>
+                  <td className="num muted">#{r.rank}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="xs muted-2" style={{ marginTop: 8 }}>
+        Scoring average is counted from every round you play. The rest are read off your attributes in the units the
+        tour quotes them in — the sim does not play individual shots, and inventing some to add back up would be the
+        same numbers with extra steps. Ranks are against every professional in the world.
+      </div>
+    </Card>
   )
 }

@@ -34,6 +34,7 @@ import {
 import { makeEntrant, simTournament } from './tournament.js'
 import { prepEdgeFor, venueEdgeFor } from './venue.js'
 import { eraLabel, eraStrength, isRollbackYear, yardsAdded } from './era.js'
+import { parFor, scoringAverage } from './stats.js'
 import { FINALE_FIELD, FINALE_ID, bonusFor, racePosition, raceStandings, raceTitle } from './race.js'
 import {
   CUP_WEEK,
@@ -192,6 +193,7 @@ export function newGame(opts = {}) {
     // Whoever is holding each cup. A tie retains it, so this matters.
     cupHolders: { continental: null, pacific: null },
     cupHistory: [],
+    courseRecords: {},
     season: [],
     nextSeason: buildSeason(fixtures, 0, rng),
     entered: {},
@@ -286,6 +288,8 @@ function emptySeasonTotals() {
     points: 0,
     moneyByCircuit: {},
     startsByCircuit: {},
+    rounds: 0,
+    strokes: 0,
     bestFinish: null,
     weeksAtNo1: 0,
   }
@@ -783,6 +787,41 @@ function fatigueCost(state, event, p) {
   return cost
 }
 
+/**
+ * Course records.
+ *
+ * Venues persist for a whole career and accumulate your history with them, but
+ * nothing remembered what had actually been shot there. A course you have
+ * played eight times should know its own lowest round, and who owns it.
+ */
+function recordCourseBest(state, event, outcome) {
+  if (!event.venue || !outcome.winner) return
+  if (!state.courseRecords) state.courseRecords = {}
+  const cur = state.courseRecords[event.venue]
+  const w = outcome.winner
+  if (cur && cur.toPar <= w.toPar) return
+  state.courseRecords[event.venue] = {
+    toPar: w.toPar,
+    name: w.name,
+    flag: w.flag,
+    year: state.year,
+    event: event.shortName || event.name,
+    isUser: !!outcome.results[0]?.isUser,
+  }
+  // Taking a course record is worth saying out loud.
+  if (cur && outcome.results[0]?.isUser) {
+    addHighlight(state, 'courseRecord', {
+      title: `Course record at ${event.venue}`,
+      text: `${fmtToPar(w.toPar)}, beating the ${fmtToPar(cur.toPar)} ${cur.name} shot here in ${cur.year}.`,
+      importance: 2,
+    })
+  }
+}
+
+export function courseRecordFor(state, venue) {
+  return (state.courseRecords && state.courseRecords[venue]) || null
+}
+
 // ------------------------------------------------------------------ the cups
 
 /**
@@ -946,6 +985,16 @@ function recordUserResult(state, event, outcome, rng, byPid) {
 
   st.starts += 1
   st.startsByCircuit[event.circuit] = (st.startsByCircuit[event.circuit] || 0) + 1
+
+  // Every round played, counted. This is the one statistic in the game that is
+  // measured rather than derived: it moves with form, weather, the courses you
+  // chose and how you actually played them.
+  const par = parFor(event)
+  const roundsPlayed = row.rounds ? row.rounds.length : row.madeCut ? 4 : 2
+  st.rounds += roundsPlayed
+  st.strokes += row.rounds
+    ? row.rounds.reduce((a, r) => a + r.strokes, 0)
+    : par * roundsPlayed + (row.madeCut ? row.toPar : Math.round(row.toPar))
   // Course knowledge is built one visit at a time, whatever you shot.
   state.career.venueStarts[event.venue] = (state.career.venueStarts[event.venue] || 0) + 1
   st.moneyByCircuit[event.circuit] = (st.moneyByCircuit[event.circuit] || 0) + split.gross
@@ -1412,6 +1461,10 @@ export function advanceOneWeek(state, rng) {
       eventId: event.id,
       name: event.name,
       circuit: event.circuit,
+      // Carried on the summary rather than looked up in state.season, which
+      // only ever holds the current year.
+      venue: event.venue,
+      courseType: event.courseType,
       winner: outcome.winner,
       cutLine: outcome.cutLine,
       conditions: outcome.conditions,
@@ -1420,6 +1473,7 @@ export function advanceOneWeek(state, rng) {
       week,
     }
     state.seasonResults[event.id] = summary
+    recordCourseBest(state, event, outcome)
     if (isUserEvent) userResult = recordUserResult(state, event, outcome, rng, byPid)
     else if (event.isMajor) {
       pushNews(state, `${outcome.winner.name} wins ${withArticle(event.name)} at ${fmtToPar(outcome.winner.toPar)}.`, 'major')
@@ -1584,6 +1638,8 @@ function endSeason(state, rng) {
     rankEnd: p.rank,
     ovr: Math.round(overall(p.ratings) * 10) / 10,
     bestFinish: st.bestFinish,
+    scoringAvg: scoringAverage(st),
+    rounds: st.rounds,
     weeksAtNo1: st.weeksAtNo1,
     status: p.status,
   }
